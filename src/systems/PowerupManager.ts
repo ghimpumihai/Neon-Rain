@@ -70,7 +70,7 @@ export class PowerupManager {
 
             if (this.spawnTimer >= this.nextSpawnTime && this.powerups.length < this.maxPowerups) {
                 this.spawnPowerup();
-                this.spawnTimer = 0;
+                this.spawnTimer -= this.nextSpawnTime;
                 this.nextSpawnTime = this.getRandomSpawnTime();
             }
         }

@@ -72,9 +72,9 @@ export class EnemyManager {
 
             // Update difficulty timer
             this.difficultyTimer += deltaTime;
-            if (this.difficultyTimer >= this.config.difficultyIncreaseInterval) {
+            while (this.difficultyTimer >= this.config.difficultyIncreaseInterval) {
                 this.increaseDifficulty();
-                this.difficultyTimer = 0;
+                this.difficultyTimer -= this.config.difficultyIncreaseInterval;
             }
         }
 
@@ -88,9 +88,9 @@ export class EnemyManager {
         this.removeOffScreenEnemies();
 
         // Spawn after updates so newly created enemies do not move on the same frame.
-        if (this.simulationEnabled && this.spawnTimer >= this.currentSpawnInterval) {
+        while (this.simulationEnabled && this.spawnTimer >= this.currentSpawnInterval) {
             this.spawnEnemy();
-            this.spawnTimer = 0;
+            this.spawnTimer -= this.currentSpawnInterval;
         }
     }
 

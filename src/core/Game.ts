@@ -70,6 +70,7 @@ export class Game {
     private frameCount: number = 0;
     private fps: number = 0;
     private fpsUpdateTime: number = 0;
+    private simulationAccumulatorSeconds: number = 0;
 
     // Arena visuals
     private readonly mapBorderThickness: number = MAP_BORDER_THICKNESS;
@@ -80,6 +81,9 @@ export class Game {
     };
     private readonly fpsLimit: number;
     private readonly minFrameIntervalSeconds: number;
+    private readonly simulationStepSeconds: number = 1 / 120;
+    private readonly maxSimulationStepsPerFrame: number = 12;
+    private readonly maxElapsedSecondsPerFrame: number = 0.25;
     private readonly enableParticles: boolean;
     private readonly enableTrailParticles: boolean;
     private readonly enableMapGlow: boolean;
@@ -316,6 +320,7 @@ export class Game {
         this.gameState = GameState.PLAYING;
         this.score = 0;
         this.gameTime = 0;
+        this.simulationAccumulatorSeconds = 0;
         this.winner = null;
 
         this.players.forEach(player => player.reset());
@@ -346,6 +351,24 @@ export class Game {
         const deltaTime = elapsedSeconds;
         this.lastTime = currentTime;
 
+        const clampedElapsedSeconds = Math.min(deltaTime, this.maxElapsedSecondsPerFrame);
+        this.simulationAccumulatorSeconds += clampedElapsedSeconds;
+
+        let simulationSteps = 0;
+        while (
+            this.simulationAccumulatorSeconds >= this.simulationStepSeconds
+            && simulationSteps < this.maxSimulationStepsPerFrame
+        ) {
+            this.update(this.simulationStepSeconds);
+            this.simulationAccumulatorSeconds -= this.simulationStepSeconds;
+            simulationSteps++;
+        }
+
+        // Prevent runaway catch-up under heavy stalls.
+        if (simulationSteps >= this.maxSimulationStepsPerFrame) {
+            this.simulationAccumulatorSeconds = 0;
+        }
+
         // FPS counter
         this.frameCount++;
         this.fpsUpdateTime += deltaTime;
@@ -355,7 +378,6 @@ export class Game {
             this.fpsUpdateTime = 0;
         }
 
-        this.update(deltaTime);
         this.draw();
 
         this.scheduleNextFrame();
@@ -724,8 +746,8 @@ export class Game {
 
             const collidedEnemy = checkCollisionWithArray(player, enemies);
             if (collidedEnemy) {
-                // Enemies deal 20 damage
-                const died = player.takeDamage(20);
+                // Falling enemies are one-shot to keep difficulty consistent across frame rates.
+                const died = player.takeDamage(player.getMaxHealth());
 
                 // Visual feedback
                 this.spawnSparkles(
