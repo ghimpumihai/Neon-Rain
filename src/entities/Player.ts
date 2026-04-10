@@ -1,5 +1,6 @@
 import { Entity } from './Entity';
 import { InputHandler } from '../systems/InputHandler';
+import type { CubeModelType, CubeHatType } from '../core/interfaces';
 
 /**
  * Player configuration
@@ -13,6 +14,8 @@ export interface PlayerConfig {
     playerNumber: 1 | 2;
     label: string;
     maxHealth: number;
+    model: CubeModelType;
+    hat: CubeHatType;
 }
 
 export const PLAYER_1_CONFIG: Partial<PlayerConfig> = {
@@ -38,6 +41,8 @@ const DEFAULT_PLAYER_CONFIG: PlayerConfig = {
     playerNumber: 1,
     label: 'P1',
     maxHealth: 100,
+    model: 'core',
+    hat: 'none',
 };
 
 /**
@@ -209,6 +214,9 @@ export class Player extends Entity {
         ctx.lineWidth = 2;
         ctx.strokeRect(this.position.x + innerPadding, this.position.y + innerPadding, this.width - innerPadding * 2, this.height - innerPadding * 2);
 
+        this.drawInnerModel(ctx);
+        this.drawHatAccessory(ctx);
+
         // Label
         ctx.shadowBlur = 3;
         ctx.shadowColor = this.config.glowColor;
@@ -232,6 +240,85 @@ export class Player extends Entity {
 
         this.drawHealthBar(ctx);
         ctx.restore();
+    }
+
+    private drawInnerModel(ctx: CanvasRenderingContext2D): void {
+        const centerX = this.position.x + this.width / 2;
+        const centerY = this.position.y + this.height / 2;
+        const modelSize = this.width * 0.55;
+
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.95)';
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.95)';
+
+        switch (this.config.model) {
+            case 'core': {
+                const size = modelSize * 0.45;
+                ctx.fillRect(centerX - size / 2, centerY - size / 2, size, size);
+                break;
+            }
+
+            case 'cross': {
+                const arm = Math.max(3, this.width * 0.16);
+                ctx.fillRect(centerX - arm / 2, centerY - modelSize / 2, arm, modelSize);
+                ctx.fillRect(centerX - modelSize / 2, centerY - arm / 2, modelSize, arm);
+                break;
+            }
+
+            case 'stripes': {
+                const stripeWidth = Math.max(2, this.width * 0.12);
+                const stripeHeight = modelSize;
+                const spacing = stripeWidth * 1.5;
+                ctx.fillRect(centerX - spacing, centerY - stripeHeight / 2, stripeWidth, stripeHeight);
+                ctx.fillRect(centerX - stripeWidth / 2, centerY - stripeHeight / 2, stripeWidth, stripeHeight);
+                ctx.fillRect(centerX + spacing - stripeWidth, centerY - stripeHeight / 2, stripeWidth, stripeHeight);
+                break;
+            }
+
+            case 'target': {
+                ctx.lineWidth = 2;
+                ctx.strokeRect(centerX - modelSize / 2, centerY - modelSize / 2, modelSize, modelSize);
+                const innerSize = modelSize * 0.45;
+                ctx.fillRect(centerX - innerSize / 2, centerY - innerSize / 2, innerSize, innerSize);
+                break;
+            }
+        }
+    }
+
+    private drawHatAccessory(ctx: CanvasRenderingContext2D): void {
+        if (this.config.hat === 'none') return;
+
+        const x = this.position.x;
+        const y = this.position.y;
+        const w = this.width;
+
+        if (this.config.hat === 'cap') {
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.92)';
+            ctx.fillRect(x + w * 0.08, y - 4, w * 0.84, 4);
+            ctx.fillStyle = this.config.color;
+            ctx.fillRect(x + w * 0.2, y - 10, w * 0.62, 6);
+            return;
+        }
+
+        if (this.config.hat === 'crown') {
+            ctx.fillStyle = '#ffd84d';
+            ctx.fillRect(x + w * 0.08, y - 6, w * 0.84, 4);
+
+            const spikeWidth = w * 0.16;
+            const spikeHeight = 7;
+            ctx.fillRect(x + w * 0.14, y - 12, spikeWidth, spikeHeight);
+            ctx.fillRect(x + w * 0.42, y - 14, spikeWidth, spikeHeight + 2);
+            ctx.fillRect(x + w * 0.7, y - 12, spikeWidth, spikeHeight);
+            return;
+        }
+
+        if (this.config.hat === 'beanie') {
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.88)';
+            ctx.fillRect(x + w * 0.1, y - 4, w * 0.8, 4);
+            ctx.fillStyle = this.config.color;
+            ctx.fillRect(x + w * 0.22, y - 10, w * 0.56, 6);
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(x + w * 0.45, y - 13, w * 0.1, 3);
+        }
     }
 
     private drawBombIndicator(ctx: CanvasRenderingContext2D): void {

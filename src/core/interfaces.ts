@@ -18,6 +18,9 @@ export interface GameObject {
     update(deltaTime: number): void;
 }
 
+export type CubeModelType = 'core' | 'cross' | 'stripes' | 'target';
+export type CubeHatType = 'none' | 'cap' | 'crown' | 'beanie';
+
 /**
  * Configuration options for the game
  */
@@ -27,4 +30,8 @@ export interface GameConfig {
     backgroundColor: string;
     player1Color?: string;
     player2Color?: string;
+    player1Model?: CubeModelType;
+    player2Model?: CubeModelType;
+    player1Hat?: CubeHatType;
+    player2Hat?: CubeHatType;
 }

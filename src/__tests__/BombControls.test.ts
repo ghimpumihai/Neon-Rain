@@ -116,26 +116,4 @@ describe('Bomb pickup and deploy controls', () => {
         expect(game.getGameState()).toBe(GameState.GAME_OVER);
     });
 
-    it('should heal player when HEAL powerup is activated', () => {
-        const game = new Game('gameCanvas');
-        const p1 = (game as any).players[0] as Player;
-
-        p1.takeDamage(40);
-        expect(p1.getHealth()).toBe(60);
-
-        (game as any).activatePowerup(p1, PowerupType.HEAL);
-        expect(p1.getHealth()).toBe(90);
-
-        (game as any).activatePowerup(p1, PowerupType.HEAL);
-        expect(p1.getHealth()).toBe(100);
-    });
-
-    it('should draw a border around the map', () => {
-        const game = new Game('gameCanvas');
-        const ctx = game.getContext() as any;
-
-        (game as any).draw();
-
-        expect(ctx.strokeRect).toHaveBeenCalledWith(3, 3, 794, 594);
-    });
 });

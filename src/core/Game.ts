@@ -10,6 +10,14 @@ import { PowerupType } from '../entities/Powerup';
 import { Bomb } from '../entities/Bomb';
 import { Projectile } from '../entities/Projectile';
 import { ObjectPool } from '../utils/ObjectPool';
+import {
+    DEFAULT_BACKGROUND_COLOR,
+    DEFAULT_CANVAS_HEIGHT,
+    DEFAULT_CANVAS_WIDTH,
+    HEAL_POWERUP_AMOUNT,
+    MAP_BORDER_COLOR,
+    MAP_BORDER_THICKNESS,
+} from '../constants/gameplay';
 
 /**
  * The main Game class - the brain of Neon Rain
@@ -50,8 +58,8 @@ export class Game {
     private fpsUpdateTime: number = 0;
 
     // Arena visuals
-    private readonly mapBorderThickness: number = 4;
-    private readonly mapBorderColor: string = '#00ffaa';
+    private readonly mapBorderThickness: number = MAP_BORDER_THICKNESS;
+    private readonly mapBorderColor: string = MAP_BORDER_COLOR;
 
     constructor(canvasId: string, config?: Partial<GameConfig>) {
         // Get the canvas element
@@ -70,11 +78,15 @@ export class Game {
 
         // Set default configuration
         this.config = {
-            canvasWidth: config?.canvasWidth ?? 800,
-            canvasHeight: config?.canvasHeight ?? 600,
-            backgroundColor: config?.backgroundColor ?? '#111',
+            canvasWidth: config?.canvasWidth ?? DEFAULT_CANVAS_WIDTH,
+            canvasHeight: config?.canvasHeight ?? DEFAULT_CANVAS_HEIGHT,
+            backgroundColor: config?.backgroundColor ?? DEFAULT_BACKGROUND_COLOR,
             player1Color: config?.player1Color,
             player2Color: config?.player2Color,
+            player1Model: config?.player1Model,
+            player2Model: config?.player2Model,
+            player1Hat: config?.player1Hat,
+            player2Hat: config?.player2Hat,
         };
 
         // Apply canvas dimensions
@@ -87,6 +99,10 @@ export class Game {
 
         const player1Color = this.config.player1Color ?? PLAYER_1_CONFIG.color ?? '#00ffff';
         const player2Color = this.config.player2Color ?? PLAYER_2_CONFIG.color ?? '#800000';
+        const player1Model = this.config.player1Model ?? PLAYER_1_CONFIG.model ?? 'core';
+        const player2Model = this.config.player2Model ?? PLAYER_2_CONFIG.model ?? 'core';
+        const player1Hat = this.config.player1Hat ?? PLAYER_1_CONFIG.hat ?? 'none';
+        const player2Hat = this.config.player2Hat ?? PLAYER_2_CONFIG.hat ?? 'none';
 
         // Initialize players
         const player1 = new Player(
@@ -97,6 +113,8 @@ export class Game {
                 ...PLAYER_1_CONFIG,
                 color: player1Color,
                 glowColor: player1Color,
+                model: player1Model,
+                hat: player1Hat,
             }
         );
         const player2 = new Player(
@@ -107,6 +125,8 @@ export class Game {
                 ...PLAYER_2_CONFIG,
                 color: player2Color,
                 glowColor: player2Color,
+                model: player2Model,
+                hat: player2Hat,
             }
         );
         this.players = [player1, player2];
@@ -408,7 +428,7 @@ export class Game {
                 break;
 
             case PowerupType.HEAL: {
-                const healedAmount = player.heal(30);
+                const healedAmount = player.heal(HEAL_POWERUP_AMOUNT);
                 if (healedAmount > 0) {
                     this.particles.spawnSparkles(
                         player.position.x + player.width / 2,

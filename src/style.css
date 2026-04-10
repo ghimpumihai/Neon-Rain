@@ -96,6 +96,7 @@ html, body {
 .cube-preview small {
   opacity: 0.8;
   text-transform: capitalize;
+  line-height: 1.25;
 }
 
 .cube-swatch {
@@ -143,10 +144,33 @@ html, body {
   margin-bottom: 18px;
 }
 
+.player-customize-card {
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 12px;
+  padding: 12px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
 .customize-section h3 {
   margin-bottom: 10px;
   font-size: 1rem;
   letter-spacing: 0.03em;
+}
+
+.customize-group {
+  margin-bottom: 10px;
+}
+
+.customize-group:last-child {
+  margin-bottom: 0;
+}
+
+.customize-group h4 {
+  font-size: 0.82rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(245, 247, 255, 0.78);
+  margin-bottom: 6px;
 }
 
 .color-grid {
@@ -184,6 +208,42 @@ html, body {
   font-size: 0.85rem;
 }
 
+.variant-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.variant-option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.06);
+  color: #f5f7ff;
+  padding: 7px 9px;
+  cursor: pointer;
+  text-transform: capitalize;
+}
+
+.variant-option.active {
+  border-color: rgba(57, 255, 20, 0.9);
+  box-shadow: 0 0 12px rgba(57, 255, 20, 0.35);
+}
+
+.variant-preview {
+  min-width: 20px;
+  text-align: center;
+  font-size: 0.88rem;
+  font-family: Consolas, 'Courier New', monospace;
+  opacity: 0.9;
+}
+
+.variant-name {
+  font-size: 0.85rem;
+}
+
 @media (max-width: 640px) {
   .menu-panel {
     padding: 20px;
@@ -194,6 +254,10 @@ html, body {
   }
 
   .color-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .variant-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }

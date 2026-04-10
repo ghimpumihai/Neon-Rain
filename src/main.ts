@@ -1,41 +1,45 @@
 import './style.css';
 import { Game } from './core/Game';
 import { GameState } from './core/GameState';
+import type { CubeHatType, CubeModelType } from './core/interfaces';
+import {
+    CUBE_HATS,
+    CUBE_MODELS,
+    CUSTOMIZATION_STORAGE_KEYS,
+    DEFAULT_PLAYER_CUSTOMIZATION,
+    NEON_COLORS,
+    type CubeHatOption,
+    type CubeModelOption,
+    type NeonColorOption,
+    type PlayerSlot,
+} from './constants/customization';
+import {
+    DEFAULT_BACKGROUND_COLOR,
+    DEFAULT_CANVAS_HEIGHT,
+    DEFAULT_CANVAS_WIDTH,
+} from './constants/gameplay';
 
 /**
  * Neon Rain - Main Entry Point
  * A 2D infinite dodger game with neon visuals
  */
 
-interface NeonColorOption {
-    name: string;
-    value: string;
-}
-
-const NEON_COLORS: NeonColorOption[] = [
-    { name: 'red', value: '#ff1744' },
-    { name: 'orange', value: '#ff9100' },
-    { name: 'yellow', value: '#ffee00' },
-    { name: 'green', value: '#39ff14' },
-    { name: 'blue', value: '#00b7ff' },
-    { name: 'purple', value: '#b026ff' },
-    { name: 'pink', value: '#ff4fd8' },
-    { name: 'grey', value: '#98a2b3' },
-    { name: 'brown', value: '#b06a3c' },
-];
-
-const COLOR_STORAGE_KEYS = {
-    p1: 'neon-rain.player1-color',
-    p2: 'neon-rain.player2-color',
-} as const;
-
 function isValidColorName(name: string): boolean {
     return NEON_COLORS.some(color => color.name === name);
 }
 
-function loadPersistedColor(player: 'p1' | 'p2', fallback: string): string {
+function isValidModelId(modelId: string): modelId is CubeModelType {
+    return CUBE_MODELS.some(model => model.id === modelId);
+}
+
+function isValidHatId(hatId: string): hatId is CubeHatType {
+    return CUBE_HATS.some(hat => hat.id === hatId);
+}
+
+function loadPersistedColor(player: PlayerSlot, fallback: string): string {
     try {
-        const stored = window.localStorage.getItem(COLOR_STORAGE_KEYS[player]);
+        const key = player === 'p1' ? CUSTOMIZATION_STORAGE_KEYS.p1Color : CUSTOMIZATION_STORAGE_KEYS.p2Color;
+        const stored = window.localStorage.getItem(key);
         if (stored && isValidColorName(stored)) {
             return stored;
         }
@@ -46,18 +50,60 @@ function loadPersistedColor(player: 'p1' | 'p2', fallback: string): string {
     return fallback;
 }
 
-function persistSelectedColors(colors: { p1: string; p2: string }): void {
+function loadPersistedModel(player: PlayerSlot, fallback: CubeModelType): CubeModelType {
     try {
-        window.localStorage.setItem(COLOR_STORAGE_KEYS.p1, colors.p1);
-        window.localStorage.setItem(COLOR_STORAGE_KEYS.p2, colors.p2);
+        const key = player === 'p1' ? CUSTOMIZATION_STORAGE_KEYS.p1Model : CUSTOMIZATION_STORAGE_KEYS.p2Model;
+        const stored = window.localStorage.getItem(key);
+        if (stored && isValidModelId(stored)) {
+            return stored;
+        }
+    } catch {
+        // Ignore storage failures and keep defaults.
+    }
+
+    return fallback;
+}
+
+function loadPersistedHat(player: PlayerSlot, fallback: CubeHatType): CubeHatType {
+    try {
+        const key = player === 'p1' ? CUSTOMIZATION_STORAGE_KEYS.p1Hat : CUSTOMIZATION_STORAGE_KEYS.p2Hat;
+        const stored = window.localStorage.getItem(key);
+        if (stored && isValidHatId(stored)) {
+            return stored;
+        }
+    } catch {
+        // Ignore storage failures and keep defaults.
+    }
+
+    return fallback;
+}
+
+function persistCustomizationSelections(): void {
+    try {
+        window.localStorage.setItem(CUSTOMIZATION_STORAGE_KEYS.p1Color, selectedColorByPlayer.p1);
+        window.localStorage.setItem(CUSTOMIZATION_STORAGE_KEYS.p2Color, selectedColorByPlayer.p2);
+        window.localStorage.setItem(CUSTOMIZATION_STORAGE_KEYS.p1Model, selectedModelByPlayer.p1);
+        window.localStorage.setItem(CUSTOMIZATION_STORAGE_KEYS.p2Model, selectedModelByPlayer.p2);
+        window.localStorage.setItem(CUSTOMIZATION_STORAGE_KEYS.p1Hat, selectedHatByPlayer.p1);
+        window.localStorage.setItem(CUSTOMIZATION_STORAGE_KEYS.p2Hat, selectedHatByPlayer.p2);
     } catch {
         // Ignore storage failures and continue gameplay.
     }
 }
 
 const selectedColorByPlayer = {
-    p1: loadPersistedColor('p1', 'blue'),
-    p2: loadPersistedColor('p2', 'red'),
+    p1: loadPersistedColor('p1', DEFAULT_PLAYER_CUSTOMIZATION.p1.color),
+    p2: loadPersistedColor('p2', DEFAULT_PLAYER_CUSTOMIZATION.p2.color),
+};
+
+const selectedModelByPlayer: Record<PlayerSlot, CubeModelType> = {
+    p1: loadPersistedModel('p1', DEFAULT_PLAYER_CUSTOMIZATION.p1.model),
+    p2: loadPersistedModel('p2', DEFAULT_PLAYER_CUSTOMIZATION.p2.model),
+};
+
+const selectedHatByPlayer: Record<PlayerSlot, CubeHatType> = {
+    p1: loadPersistedHat('p1', DEFAULT_PLAYER_CUSTOMIZATION.p1.hat),
+    p2: loadPersistedHat('p2', DEFAULT_PLAYER_CUSTOMIZATION.p2.hat),
 };
 
 let game: Game | null = null;
@@ -78,9 +124,19 @@ const menuOverlay = document.createElement('div');
 menuOverlay.className = 'menu-overlay';
 app.appendChild(menuOverlay);
 
-function getSelectedColor(player: 'p1' | 'p2'): NeonColorOption {
+function getSelectedColor(player: PlayerSlot): NeonColorOption {
     const selected = NEON_COLORS.find(c => c.name === selectedColorByPlayer[player]);
     return selected ?? NEON_COLORS[0];
+}
+
+function getSelectedModel(player: PlayerSlot): CubeModelOption {
+    const selected = CUBE_MODELS.find(model => model.id === selectedModelByPlayer[player]);
+    return selected ?? CUBE_MODELS[0];
+}
+
+function getSelectedHat(player: PlayerSlot): CubeHatOption {
+    const selected = CUBE_HATS.find(hat => hat.id === selectedHatByPlayer[player]);
+    return selected ?? CUBE_HATS[0];
 }
 
 function showStartMenu(): void {
@@ -97,12 +153,16 @@ function showStartMenu(): void {
                 <div class="cube-preview">
                     <span>P1</span>
                     <div class="cube-swatch" style="background:${getSelectedColor('p1').value}"></div>
-                    <small>${getSelectedColor('p1').name}</small>
+                    <small>color: ${getSelectedColor('p1').name}</small>
+                    <small>model: ${getSelectedModel('p1').name}</small>
+                    <small>hat: ${getSelectedHat('p1').name}</small>
                 </div>
                 <div class="cube-preview">
                     <span>P2</span>
                     <div class="cube-swatch" style="background:${getSelectedColor('p2').value}"></div>
-                    <small>${getSelectedColor('p2').name}</small>
+                    <small>color: ${getSelectedColor('p2').name}</small>
+                    <small>model: ${getSelectedModel('p2').name}</small>
+                    <small>hat: ${getSelectedHat('p2').name}</small>
                 </div>
             </div>
 
@@ -120,11 +180,13 @@ function showStartMenu(): void {
     openCustomizeBtn?.addEventListener('click', showCustomizeMenu);
 }
 
-function createColorSection(player: 'p1' | 'p2', title: string): string {
-    const selectedName = selectedColorByPlayer[player];
+function createPlayerCustomizationSection(player: PlayerSlot, title: string): string {
+    const selectedColorName = selectedColorByPlayer[player];
+    const selectedModel = selectedModelByPlayer[player];
+    const selectedHat = selectedHatByPlayer[player];
 
     const colorButtons = NEON_COLORS.map(color => {
-        const isActive = color.name === selectedName;
+        const isActive = color.name === selectedColorName;
         return `
             <button
                 class="color-option ${isActive ? 'active' : ''}"
@@ -139,10 +201,58 @@ function createColorSection(player: 'p1' | 'p2', title: string): string {
         `;
     }).join('');
 
+    const modelButtons = CUBE_MODELS.map(model => {
+        const isActive = model.id === selectedModel;
+        return `
+            <button
+                class="variant-option ${isActive ? 'active' : ''}"
+                data-player="${player}"
+                data-kind="model"
+                data-value="${model.id}"
+                title="${model.name}"
+                aria-label="${title} model ${model.name}"
+            >
+                <span class="variant-preview">${model.preview}</span>
+                <span class="variant-name">${model.name}</span>
+            </button>
+        `;
+    }).join('');
+
+    const hatButtons = CUBE_HATS.map(hat => {
+        const isActive = hat.id === selectedHat;
+        return `
+            <button
+                class="variant-option ${isActive ? 'active' : ''}"
+                data-player="${player}"
+                data-kind="hat"
+                data-value="${hat.id}"
+                title="${hat.name}"
+                aria-label="${title} hat ${hat.name}"
+            >
+                <span class="variant-preview">${hat.preview}</span>
+                <span class="variant-name">${hat.name}</span>
+            </button>
+        `;
+    }).join('');
+
     return `
-        <section class="customize-section">
+        <section class="customize-section player-customize-card">
             <h3>${title}</h3>
-            <div class="color-grid">${colorButtons}</div>
+
+            <div class="customize-group">
+                <h4>Color</h4>
+                <div class="color-grid">${colorButtons}</div>
+            </div>
+
+            <div class="customize-group">
+                <h4>Inner Model</h4>
+                <div class="variant-grid">${modelButtons}</div>
+            </div>
+
+            <div class="customize-group">
+                <h4>Hat</h4>
+                <div class="variant-grid">${hatButtons}</div>
+            </div>
         </section>
     `;
 }
@@ -151,10 +261,10 @@ function showCustomizeMenu(): void {
     menuOverlay.innerHTML = `
         <div class="menu-panel customize-panel">
             <h2 class="menu-title">Customize Cubes</h2>
-            <p class="menu-subtitle">Choose from predefined neon colors</p>
+            <p class="menu-subtitle">Choose a color, inner model, and hat for each player</p>
 
-            ${createColorSection('p1', 'Player 1')}
-            ${createColorSection('p2', 'Player 2')}
+            ${createPlayerCustomizationSection('p1', 'Player 1')}
+            ${createPlayerCustomizationSection('p2', 'Player 2')}
 
             <div class="menu-actions">
                 <button id="backToMenuBtn" class="menu-btn secondary">Back</button>
@@ -167,13 +277,34 @@ function showCustomizeMenu(): void {
 
     document.querySelectorAll<HTMLButtonElement>('.color-option').forEach(button => {
         button.addEventListener('click', () => {
-            const player = button.dataset.player as 'p1' | 'p2' | undefined;
+            const player = button.dataset.player as PlayerSlot | undefined;
             const color = button.dataset.color;
 
-            if (!player || !color) return;
+            if (!player || !color || !isValidColorName(color)) return;
 
             selectedColorByPlayer[player] = color;
-            persistSelectedColors(selectedColorByPlayer);
+            persistCustomizationSelections();
+            showCustomizeMenu();
+        });
+    });
+
+    document.querySelectorAll<HTMLButtonElement>('.variant-option').forEach(button => {
+        button.addEventListener('click', () => {
+            const player = button.dataset.player as PlayerSlot | undefined;
+            const kind = button.dataset.kind as 'model' | 'hat' | undefined;
+            const value = button.dataset.value;
+
+            if (!player || !kind || !value) return;
+
+            if (kind === 'model' && isValidModelId(value)) {
+                selectedModelByPlayer[player] = value;
+            }
+
+            if (kind === 'hat' && isValidHatId(value)) {
+                selectedHatByPlayer[player] = value;
+            }
+
+            persistCustomizationSelections();
             showCustomizeMenu();
         });
     });
@@ -205,11 +336,15 @@ function startGame(): void {
     menuOverlay.remove();
 
     game = new Game('gameCanvas', {
-        canvasWidth: 800,
-        canvasHeight: 600,
-        backgroundColor: '#111',
+        canvasWidth: DEFAULT_CANVAS_WIDTH,
+        canvasHeight: DEFAULT_CANVAS_HEIGHT,
+        backgroundColor: DEFAULT_BACKGROUND_COLOR,
         player1Color: getSelectedColor('p1').value,
         player2Color: getSelectedColor('p2').value,
+        player1Model: selectedModelByPlayer.p1,
+        player2Model: selectedModelByPlayer.p2,
+        player1Hat: selectedHatByPlayer.p1,
+        player2Hat: selectedHatByPlayer.p2,
     });
 
     game.start();
