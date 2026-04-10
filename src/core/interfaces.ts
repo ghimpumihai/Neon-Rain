@@ -25,4 +25,6 @@ export interface GameConfig {
     canvasWidth: number;
     canvasHeight: number;
     backgroundColor: string;
+    player1Color?: string;
+    player2Color?: string;
 }

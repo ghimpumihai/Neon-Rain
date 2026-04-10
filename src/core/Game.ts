@@ -69,6 +69,8 @@ export class Game {
             canvasWidth: config?.canvasWidth ?? 800,
             canvasHeight: config?.canvasHeight ?? 600,
             backgroundColor: config?.backgroundColor ?? '#111',
+            player1Color: config?.player1Color,
+            player2Color: config?.player2Color,
         };
 
         // Apply canvas dimensions
@@ -79,18 +81,29 @@ export class Game {
         const input1 = new InputHandler(PLAYER_1_KEYS, 'P1');
         const input2 = new InputHandler(PLAYER_2_KEYS, 'P2');
 
+        const player1Color = this.config.player1Color ?? PLAYER_1_CONFIG.color ?? '#00ffff';
+        const player2Color = this.config.player2Color ?? PLAYER_2_CONFIG.color ?? '#800000';
+
         // Initialize players
         const player1 = new Player(
             this.config.canvasWidth,
             this.config.canvasHeight,
             input1,
-            PLAYER_1_CONFIG
+            {
+                ...PLAYER_1_CONFIG,
+                color: player1Color,
+                glowColor: player1Color,
+            }
         );
         const player2 = new Player(
             this.config.canvasWidth,
             this.config.canvasHeight,
             input2,
-            PLAYER_2_CONFIG
+            {
+                ...PLAYER_2_CONFIG,
+                color: player2Color,
+                glowColor: player2Color,
+            }
         );
         this.players = [player1, player2];
 
@@ -607,6 +620,10 @@ export class Game {
         this.ctx.fillStyle = '#ffffff';
         this.ctx.font = '20px monospace';
         this.ctx.fillText("Press SPACE to Rematch", cx, cy + 50);
+
+        this.ctx.fillStyle = 'rgba(255, 255, 255, 0.85)';
+        this.ctx.font = '16px monospace';
+        this.ctx.fillText("Press M for Main Menu", cx, cy + 80);
 
         this.ctx.restore();
     }
