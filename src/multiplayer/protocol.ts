@@ -74,6 +74,8 @@ export interface GameSnapshot {
     gameTimeSeconds: number;
     roundState: SnapshotRoundState;
     score: number;
+    worldWidth?: number;
+    worldHeight?: number;
     players: PlayerSnapshot[];
     enemies: EnemySnapshot[];
     projectiles: ProjectileSnapshot[];

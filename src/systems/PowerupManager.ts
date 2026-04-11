@@ -50,8 +50,10 @@ export class PowerupManager {
      */
     private spawnPowerup(): void {
         // Random position (avoid edges and bottom where players are)
-        const x = this.margin + Math.random() * (this.canvasWidth - this.margin * 2);
-        const y = this.margin + Math.random() * (this.canvasHeight - this.margin * 3); // Avoid bottom
+        const spawnRangeX = Math.max(0, this.canvasWidth - this.margin * 2);
+        const spawnRangeY = Math.max(0, this.canvasHeight - this.margin * 3);
+        const x = this.margin + Math.random() * spawnRangeX;
+        const y = this.margin + Math.random() * spawnRangeY; // Avoid bottom
 
         const type = this.getRandomPowerupType();
         const powerup = new Powerup(x, y, type);
@@ -88,6 +90,31 @@ export class PowerupManager {
 
     public setSimulationEnabled(enabled: boolean): void {
         this.simulationEnabled = enabled;
+    }
+
+    public resizeWorld(canvasWidth: number, canvasHeight: number, scaleX: number = 1, scaleY: number = 1): void {
+        this.canvasWidth = canvasWidth;
+        this.canvasHeight = canvasHeight;
+
+        for (const powerup of this.powerups) {
+            powerup.position.x *= scaleX;
+            powerup.position.y *= scaleY;
+
+            const maxX = Math.max(0, this.canvasWidth - powerup.width);
+            const maxY = Math.max(0, this.canvasHeight - powerup.height);
+
+            if (powerup.position.x < 0) {
+                powerup.position.x = 0;
+            } else if (powerup.position.x > maxX) {
+                powerup.position.x = maxX;
+            }
+
+            if (powerup.position.y < 0) {
+                powerup.position.y = 0;
+            } else if (powerup.position.y > maxY) {
+                powerup.position.y = maxY;
+            }
+        }
     }
 
     public serializePowerups(): PowerupSnapshot[] {

@@ -55,6 +55,8 @@ export class Player extends Entity {
     private config: PlayerConfig;
     private canvasWidth: number;
     private canvasHeight: number;
+    private spawnSlotIndex: number;
+    private spawnSlots: number;
     private isDashing: boolean = false;
     private glowIntensity: number = 0;
     private glowDirection: number = 1;
@@ -95,19 +97,8 @@ export class Player extends Entity {
         const spawnSlots = Math.max(2, Math.floor(finalConfig.spawnSlots ?? 2));
         const defaultSlotIndex = Math.max(0, Math.floor(finalConfig.playerNumber) - 1);
         const spawnSlotIndex = Math.max(0, Math.min(spawnSlots - 1, Math.floor(finalConfig.spawnSlotIndex ?? defaultSlotIndex)));
-        let startX: number;
-        const startY = canvasHeight - finalConfig.size - 50;
-
-        // Preserve legacy two-player spawn lanes for local PvP.
-        if (spawnSlots <= 2) {
-            if (spawnSlotIndex === 0) {
-                startX = canvasWidth / 4 - finalConfig.size / 2;
-            } else {
-                startX = (canvasWidth * 3) / 4 - finalConfig.size / 2;
-            }
-        } else {
-            startX = ((spawnSlotIndex + 1) / (spawnSlots + 1)) * canvasWidth - finalConfig.size / 2;
-        }
+        const startX = Player.computeSpawnXForSlot(canvasWidth, finalConfig.size, spawnSlotIndex, spawnSlots);
+        const startY = Player.computeSpawnY(canvasHeight, finalConfig.size);
 
         super(startX, startY, finalConfig.size, finalConfig.size, finalConfig.color);
 
@@ -115,10 +106,34 @@ export class Player extends Entity {
         this.config = finalConfig;
         this.canvasWidth = canvasWidth;
         this.canvasHeight = canvasHeight;
+        this.spawnSlotIndex = spawnSlotIndex;
+        this.spawnSlots = spawnSlots;
         this.startX = startX;
         this.startY = startY;
         this.maxHealth = finalConfig.maxHealth;
         this.health = this.maxHealth;
+    }
+
+    private static computeSpawnY(canvasHeight: number, playerSize: number): number {
+        return canvasHeight - playerSize - 50;
+    }
+
+    private static computeSpawnXForSlot(
+        canvasWidth: number,
+        playerSize: number,
+        spawnSlotIndex: number,
+        spawnSlots: number
+    ): number {
+        // Preserve legacy two-player spawn lanes for local PvP.
+        if (spawnSlots <= 2) {
+            if (spawnSlotIndex === 0) {
+                return canvasWidth / 4 - playerSize / 2;
+            }
+
+            return (canvasWidth * 3) / 4 - playerSize / 2;
+        }
+
+        return ((spawnSlotIndex + 1) / (spawnSlots + 1)) * canvasWidth - playerSize / 2;
     }
 
     public update(deltaTime: number, injectedInput?: InputState): void {
@@ -198,6 +213,28 @@ export class Player extends Entity {
         if (this.position.x + this.width > this.canvasWidth) this.position.x = this.canvasWidth - this.width;
         if (this.position.y < 0) this.position.y = 0;
         if (this.position.y + this.height > this.canvasHeight) this.position.y = this.canvasHeight - this.height;
+    }
+
+    public resizeWorld(
+        canvasWidth: number,
+        canvasHeight: number,
+        options?: { scaleX?: number; scaleY?: number; preservePosition?: boolean }
+    ): void {
+        const scaleX = options?.scaleX ?? 1;
+        const scaleY = options?.scaleY ?? 1;
+        const preservePosition = options?.preservePosition ?? true;
+
+        this.canvasWidth = canvasWidth;
+        this.canvasHeight = canvasHeight;
+        this.startX = Player.computeSpawnXForSlot(canvasWidth, this.width, this.spawnSlotIndex, this.spawnSlots);
+        this.startY = Player.computeSpawnY(canvasHeight, this.height);
+
+        if (preservePosition) {
+            this.position.x *= scaleX;
+            this.position.y *= scaleY;
+        }
+
+        this.clampToBounds();
     }
 
     private updateGlow(deltaTime: number): void {

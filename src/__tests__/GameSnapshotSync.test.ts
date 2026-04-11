@@ -44,10 +44,14 @@ describe('Game multiplayer snapshot sync', () => {
         expect(snapshot.players).toHaveLength(2);
         expect(snapshot.players[0].playerId).toBe('p-host');
         expect(snapshot.players[1].playerId).toBe('p-peer');
+        expect(snapshot.worldWidth).toBe(800);
+        expect(snapshot.worldHeight).toBe(600);
 
         snapshot.gameTimeSeconds = 33;
         snapshot.score = 120;
         snapshot.roundState = 'game_over';
+        snapshot.worldWidth = 640;
+        snapshot.worldHeight = 480;
         snapshot.players[0].position.x += 40;
         snapshot.players[0].position.y += 25;
         snapshot.players[0].health = 55;
@@ -60,6 +64,8 @@ describe('Game multiplayer snapshot sync', () => {
         expect(players[0].getHealth()).toBe(55);
         expect(game.getGameState()).toBe(GameState.GAME_OVER);
         expect(game.getGameTime()).toBe(33);
+        expect(game.getConfig().canvasWidth).toBe(640);
+        expect(game.getConfig().canvasHeight).toBe(480);
     });
 
     it('supports four active multiplayer slots in snapshot serialization', () => {

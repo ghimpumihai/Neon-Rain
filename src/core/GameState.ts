@@ -57,6 +57,11 @@ export class GameOverScreen {
         this.animationProgress = Math.min(1, this.animationProgress + deltaTime * 2);
     }
 
+    public resize(canvasWidth: number, canvasHeight: number): void {
+        this.canvasWidth = canvasWidth;
+        this.canvasHeight = canvasHeight;
+    }
+
     /**
      * Draw the game over screen
      */

@@ -98,6 +98,30 @@ export class EnemyManager {
         this.simulationEnabled = enabled;
     }
 
+    public resizeWorld(canvasWidth: number, canvasHeight: number, scaleX: number = 1, scaleY: number = 1): void {
+        this.config.canvasWidth = canvasWidth;
+        this.config.canvasHeight = canvasHeight;
+
+        const enemies = [...this.enemyPool.getActiveObjects()];
+        for (const enemy of enemies) {
+            enemy.position.x *= scaleX;
+            enemy.position.y *= scaleY;
+
+            const maxX = Math.max(0, this.config.canvasWidth - enemy.width);
+            if (enemy.position.x < 0) {
+                enemy.position.x = 0;
+            } else if (enemy.position.x > maxX) {
+                enemy.position.x = maxX;
+            }
+
+            enemy.setCanvasHeight(this.config.canvasHeight);
+
+            if (enemy.position.y > this.config.canvasHeight || enemy.getIsOffScreen()) {
+                this.enemyPool.release(enemy);
+            }
+        }
+    }
+
     public serializeEnemies(): EnemySnapshot[] {
         return this.enemyPool.getActiveObjects().map((enemy, index) => ({
             enemyId: `enemy-${index}`,

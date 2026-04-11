@@ -455,8 +455,50 @@ html, body {
   transform: scale(0.96);
 }
 
+.mobile-game-over-actions {
+  position: absolute;
+  left: 50%;
+  bottom: max(16px, env(safe-area-inset-bottom));
+  transform: translateX(-50%);
+  display: none;
+  gap: 10px;
+  z-index: 45;
+  pointer-events: auto;
+}
+
+.mobile-game-over-btn {
+  min-width: 136px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  padding: 12px 14px;
+  font-size: 0.9rem;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.mobile-game-over-btn.primary {
+  color: #070b14;
+  background: linear-gradient(120deg, #39ff14, #00b7ff);
+  box-shadow: 0 0 14px rgba(0, 183, 255, 0.4);
+}
+
+.mobile-game-over-btn.secondary {
+  color: #f5f7ff;
+  background: rgba(14, 18, 30, 0.9);
+  box-shadow: 0 0 12px rgba(255, 255, 255, 0.16);
+}
+
+.mobile-game-over-btn:active {
+  transform: scale(0.97);
+}
+
 @media (pointer: fine) {
   .mobile-controls-overlay {
+    display: none !important;
+  }
+
+  .mobile-game-over-actions {
     display: none !important;
   }
 }

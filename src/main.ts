@@ -254,6 +254,7 @@ let multiplayerSnapshotTick = 0;
 let multiplayerSnapshotSyncIntervalId: number | null = null;
 let multiplayerIsHost = false;
 let multiplayerMatchStartPending = false;
+let activeRuntimeRole: 'local' | 'host' | 'client' = 'local';
 
 const appElement = document.getElementById('app');
 const canvasElement = document.getElementById('gameCanvas');
@@ -266,12 +267,82 @@ const app = appElement;
 const canvas = canvasElement;
 const mobileControls = isMobileDevice() ? new MobileControls() : null;
 const CANVAS_VIEWPORT_PADDING_PX = 12;
+let mobileGameOverUiFrameId: number | null = null;
 
 canvas.style.display = 'none';
 
 const menuOverlay = document.createElement('div');
 menuOverlay.className = 'menu-overlay';
 app.appendChild(menuOverlay);
+
+const mobileGameOverActions = document.createElement('div');
+mobileGameOverActions.className = 'mobile-game-over-actions';
+mobileGameOverActions.innerHTML = `
+    <button id="mobileRestartBtn" class="mobile-game-over-btn primary" type="button">Rematch</button>
+    <button id="mobileMenuBtn" class="mobile-game-over-btn secondary" type="button">Main Menu</button>
+`;
+app.appendChild(mobileGameOverActions);
+
+const mobileRestartBtn = mobileGameOverActions.querySelector('#mobileRestartBtn') as HTMLButtonElement | null;
+const mobileMenuBtn = mobileGameOverActions.querySelector('#mobileMenuBtn') as HTMLButtonElement | null;
+
+function setMobileGameOverActionsVisible(visible: boolean): void {
+    mobileGameOverActions.style.display = visible ? 'flex' : 'none';
+}
+
+function updateMobileUiForGameState(): void {
+    if (!mobileControls) {
+        setMobileGameOverActionsVisible(false);
+        mobileGameOverUiFrameId = null;
+        return;
+    }
+
+    if (!game) {
+        mobileControls.setVisible(false);
+        setMobileGameOverActionsVisible(false);
+        mobileGameOverUiFrameId = null;
+        return;
+    }
+
+    const isGameOver = game.getGameState() === GameState.GAME_OVER;
+    mobileControls.setVisible(!isGameOver);
+    setMobileGameOverActionsVisible(isGameOver);
+
+    mobileGameOverUiFrameId = window.requestAnimationFrame(updateMobileUiForGameState);
+}
+
+function startMobileUiWatcher(): void {
+    if (!mobileControls || mobileGameOverUiFrameId !== null) {
+        return;
+    }
+
+    mobileGameOverUiFrameId = window.requestAnimationFrame(updateMobileUiForGameState);
+}
+
+function stopMobileUiWatcher(): void {
+    if (mobileGameOverUiFrameId !== null) {
+        window.cancelAnimationFrame(mobileGameOverUiFrameId);
+        mobileGameOverUiFrameId = null;
+    }
+
+    setMobileGameOverActionsVisible(false);
+}
+
+mobileRestartBtn?.addEventListener('click', () => {
+    if (!game || game.getGameState() !== GameState.GAME_OVER) {
+        return;
+    }
+
+    game.restart();
+});
+
+mobileMenuBtn?.addEventListener('click', () => {
+    if (!game || game.getGameState() !== GameState.GAME_OVER) {
+        return;
+    }
+
+    returnToMainMenu();
+});
 
 function applyResponsiveCanvasLayout(): void {
     const sourceWidth = game?.getConfig().canvasWidth
@@ -289,11 +360,37 @@ function applyResponsiveCanvasLayout(): void {
     canvas.style.height = `${Math.floor(sourceHeight * safeScale)}px`;
 }
 
+function getViewportFittedWorldDimensions(sourceWidth: number, sourceHeight: number): { width: number; height: number } {
+    const maxWidth = Math.max(200, window.innerWidth - CANVAS_VIEWPORT_PADDING_PX * 2);
+    const maxHeight = Math.max(200, window.innerHeight - CANVAS_VIEWPORT_PADDING_PX * 2);
+
+    const scale = Math.min(maxWidth / sourceWidth, maxHeight / sourceHeight);
+    const safeScale = Number.isFinite(scale) ? Math.max(0.2, scale) : 1;
+
+    return {
+        width: Math.max(200, Math.floor(sourceWidth * safeScale)),
+        height: Math.max(200, Math.floor(sourceHeight * safeScale)),
+    };
+}
+
+function syncSimulationWorldToViewport(): void {
+    if (!game || activeRuntimeRole === 'client') {
+        return;
+    }
+
+    const currentWidth = game.getConfig().canvasWidth;
+    const currentHeight = game.getConfig().canvasHeight;
+    const targetDimensions = getViewportFittedWorldDimensions(currentWidth, currentHeight);
+
+    game.resizeWorld(targetDimensions.width, targetDimensions.height);
+}
+
 function handleViewportResize(): void {
     if (canvas.style.display === 'none') {
         return;
     }
 
+    syncSimulationWorldToViewport();
     applyResponsiveCanvasLayout();
 }
 
@@ -577,6 +674,7 @@ function handleMultiplayerMessage(message: ServerToClientMessage): void {
         case 'state_snapshot':
             if (!multiplayerIsHost && game && multiplayerRoom && message.fromPlayerId === multiplayerRoom.hostPlayerId) {
                 game.applySnapshot(message.snapshot, multiplayerMatchPlayerOrder, multiplayerSelfPlayerId);
+                applyResponsiveCanvasLayout();
             }
             break;
         case 'game_event':
@@ -794,6 +892,7 @@ function showMultiplayerMenu(): void {
 
 function showStartMenu(): void {
     mobileControls?.setVisible(false);
+    setMobileGameOverActionsVisible(false);
 
     if (!menuOverlay.isConnected) {
         app.appendChild(menuOverlay);
@@ -1037,7 +1136,9 @@ function showCustomizeMenu(): void {
 
 function returnToMainMenu(): void {
     stopMultiplayerInputSync();
+    stopMobileUiWatcher();
     mobileControls?.setVisible(false);
+    activeRuntimeRole = 'local';
 
     if (!game) {
         showStartMenu();
@@ -1071,6 +1172,8 @@ function startGame(options?: {
 }): void {
     if (game) return;
 
+    activeRuntimeRole = options?.multiplayerRole ?? 'local';
+
     const applyClientReduction = options?.multiplayerRole === 'client' && graphicsSettings.reduceClientEffects;
     const enableParticles = applyClientReduction ? false : graphicsSettings.particles;
     const enableTrailParticles = applyClientReduction ? false : graphicsSettings.trails;
@@ -1084,6 +1187,8 @@ function startGame(options?: {
         mobileControls.attach(app);
         mobileControls.setVisible(true);
     }
+
+    setMobileGameOverActionsVisible(false);
 
     game = new Game('gameCanvas', {
         canvasWidth: DEFAULT_CANVAS_WIDTH,
@@ -1104,7 +1209,9 @@ function startGame(options?: {
     });
 
     game.start();
+    syncSimulationWorldToViewport();
     applyResponsiveCanvasLayout();
+    startMobileUiWatcher();
 
     if (mobileControls && !options?.multiplayerSlots) {
         // On mobile local mode, drive player one from joystick + boost overlay.

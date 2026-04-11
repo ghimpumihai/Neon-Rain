@@ -133,6 +133,13 @@ export class Enemy extends Entity {
         return this.velocity.y;
     }
 
+    public setCanvasHeight(canvasHeight: number): void {
+        this.canvasHeight = canvasHeight;
+        if (this.position.y > this.canvasHeight) {
+            this.isOffScreen = true;
+        }
+    }
+
     public getColor(): string {
         return this.color;
     }

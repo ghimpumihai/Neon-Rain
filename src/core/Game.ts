@@ -34,6 +34,9 @@ type NetworkRole = 'local' | 'host' | 'client';
  * Supports 1v1 Competitive PvP Mode
  */
 export class Game {
+    private static readonly MIN_WORLD_WIDTH = 200;
+    private static readonly MIN_WORLD_HEIGHT = 200;
+
     private canvas: HTMLCanvasElement;
     private ctx: CanvasRenderingContext2D;
     private lastTime: number = 0;
@@ -333,6 +336,96 @@ export class Game {
         this.bombs = [];
 
         this.gameOverScreen.reset();
+    }
+
+    private normalizeWorldWidth(width: number): number {
+        if (!Number.isFinite(width)) {
+            return this.config.canvasWidth;
+        }
+
+        return Math.max(Game.MIN_WORLD_WIDTH, Math.floor(width));
+    }
+
+    private normalizeWorldHeight(height: number): number {
+        if (!Number.isFinite(height)) {
+            return this.config.canvasHeight;
+        }
+
+        return Math.max(Game.MIN_WORLD_HEIGHT, Math.floor(height));
+    }
+
+    private clampEntityToWorld(entity: { position: { x: number; y: number }; width: number; height: number }): void {
+        const maxX = Math.max(0, this.config.canvasWidth - entity.width);
+        const maxY = Math.max(0, this.config.canvasHeight - entity.height);
+
+        if (entity.position.x < 0) {
+            entity.position.x = 0;
+        } else if (entity.position.x > maxX) {
+            entity.position.x = maxX;
+        }
+
+        if (entity.position.y < 0) {
+            entity.position.y = 0;
+        } else if (entity.position.y > maxY) {
+            entity.position.y = maxY;
+        }
+    }
+
+    public resizeWorld(
+        canvasWidth: number,
+        canvasHeight: number,
+        options?: { preserveEntityPositions?: boolean }
+    ): void {
+        const normalizedWidth = this.normalizeWorldWidth(canvasWidth);
+        const normalizedHeight = this.normalizeWorldHeight(canvasHeight);
+
+        if (normalizedWidth === this.config.canvasWidth && normalizedHeight === this.config.canvasHeight) {
+            return;
+        }
+
+        const previousWidth = this.config.canvasWidth;
+        const previousHeight = this.config.canvasHeight;
+        const scaleX = previousWidth > 0 ? normalizedWidth / previousWidth : 1;
+        const scaleY = previousHeight > 0 ? normalizedHeight / previousHeight : 1;
+        const preserveEntityPositions = options?.preserveEntityPositions ?? true;
+        const entityScaleX = preserveEntityPositions ? scaleX : 1;
+        const entityScaleY = preserveEntityPositions ? scaleY : 1;
+
+        this.config.canvasWidth = normalizedWidth;
+        this.config.canvasHeight = normalizedHeight;
+
+        this.canvas.width = normalizedWidth;
+        this.canvas.height = normalizedHeight;
+
+        this.players.forEach(player => {
+            player.resizeWorld(normalizedWidth, normalizedHeight, {
+                scaleX: entityScaleX,
+                scaleY: entityScaleY,
+                preservePosition: preserveEntityPositions,
+            });
+        });
+
+        this.enemyManager.resizeWorld(normalizedWidth, normalizedHeight, entityScaleX, entityScaleY);
+        this.powerupManager.resizeWorld(normalizedWidth, normalizedHeight, entityScaleX, entityScaleY);
+
+        this.projectilePool.getActiveObjects().forEach(projectile => {
+            projectile.position.x *= entityScaleX;
+            projectile.position.y *= entityScaleY;
+            this.clampEntityToWorld(projectile);
+        });
+
+        this.bombs.forEach(bomb => {
+            bomb.position.x *= entityScaleX;
+            bomb.position.y *= entityScaleY;
+            this.clampEntityToWorld(bomb);
+        });
+
+        this.lastPlayerPositions = this.players.map(player => ({
+            x: player.position.x,
+            y: player.position.y,
+        }));
+
+        this.gameOverScreen.resize(normalizedWidth, normalizedHeight);
     }
 
     /**
@@ -1056,6 +1149,8 @@ export class Game {
             gameTimeSeconds: this.gameTime,
             roundState: this.mapGameStateToRoundState(this.gameState),
             score: this.score,
+            worldWidth: this.config.canvasWidth,
+            worldHeight: this.config.canvasHeight,
             players,
             enemies: this.enemyManager.serializeEnemies(),
             projectiles,
@@ -1069,6 +1164,10 @@ export class Game {
         playerOrder?: string[],
         localPlayerId?: string | null
     ): void {
+        if (typeof snapshot.worldWidth === 'number' && typeof snapshot.worldHeight === 'number') {
+            this.resizeWorld(snapshot.worldWidth, snapshot.worldHeight, { preserveEntityPositions: false });
+        }
+
         const resolvedPlayerOrder = this.resolvePlayerOrder(playerOrder);
         const resolvedLocalPlayerId = localPlayerId ?? this.networkLocalPlayerId;
 
