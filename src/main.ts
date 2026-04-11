@@ -26,6 +26,7 @@ import {
     DEFAULT_CANVAS_WIDTH,
 } from './constants/gameplay';
 import { InputHandler, type InputState, type KeyBindings } from './systems/InputHandler';
+import { MobileControls } from './systems/MobileControls';
 
 /**
  * Neon Rain - Main Entry Point
@@ -42,6 +43,21 @@ function isValidModelId(modelId: string): modelId is CubeModelType {
 
 function isValidHatId(hatId: string): hatId is CubeHatType {
     return CUBE_HATS.some(hat => hat.id === hatId);
+}
+
+function isMobileDevice(): boolean {
+    const coarsePointer = typeof window.matchMedia === 'function'
+        ? window.matchMedia('(pointer: coarse)').matches
+        : false;
+
+    const touchPoints = typeof navigator.maxTouchPoints === 'number'
+        ? navigator.maxTouchPoints
+        : 0;
+
+    const userAgent = navigator.userAgent.toLowerCase();
+    const mobileUserAgent = /android|iphone|ipad|ipod|mobile/.test(userAgent);
+
+    return coarsePointer || touchPoints > 0 || mobileUserAgent;
 }
 
 const FPS_LIMIT_OPTIONS = [0, 30, 60, 90, 120, 144] as const;
@@ -248,6 +264,7 @@ if (!(appElement instanceof HTMLElement) || !(canvasElement instanceof HTMLCanva
 
 const app = appElement;
 const canvas = canvasElement;
+const mobileControls = isMobileDevice() ? new MobileControls() : null;
 
 canvas.style.display = 'none';
 
@@ -316,6 +333,8 @@ function stopMultiplayerInputSync(): void {
     multiplayerIsHost = false;
     multiplayerMatchStartPending = false;
 
+    mobileControls?.reset();
+
     if (game) {
         game.setNetworkSyncContext({ role: 'local' });
         game.setPlayerInputResolver(undefined);
@@ -358,7 +377,7 @@ function startMatchTransportLoops(): void {
             return;
         }
 
-        const localInput = cloneInputState(multiplayerLocalInputHandler.getState());
+        const localInput = getLocalControlInputState();
 
         const sent = networkClient.sendInputFrame(multiplayerInputSequence, localInput);
         if (sent) {
@@ -453,7 +472,7 @@ function startMultiplayerMatchFromRoom(roomOverride?: RoomSummary): boolean {
         }
 
         if (mappedPlayerId === multiplayerSelfPlayerId) {
-            return cloneInputState(multiplayerLocalInputHandler.getState());
+            return getLocalControlInputState();
         }
 
         return multiplayerRemoteInputByPlayerId.get(mappedPlayerId) ?? NEUTRAL_INPUT_STATE;
@@ -749,6 +768,8 @@ function showMultiplayerMenu(): void {
 }
 
 function showStartMenu(): void {
+    mobileControls?.setVisible(false);
+
     if (!menuOverlay.isConnected) {
         app.appendChild(menuOverlay);
     }
@@ -991,6 +1012,7 @@ function showCustomizeMenu(): void {
 
 function returnToMainMenu(): void {
     stopMultiplayerInputSync();
+    mobileControls?.setVisible(false);
 
     if (!game) {
         showStartMenu();
@@ -1033,6 +1055,11 @@ function startGame(options?: {
     canvas.style.display = 'block';
     menuOverlay.remove();
 
+    if (mobileControls) {
+        mobileControls.attach(app);
+        mobileControls.setVisible(true);
+    }
+
     game = new Game('gameCanvas', {
         canvasWidth: DEFAULT_CANVAS_WIDTH,
         canvasHeight: DEFAULT_CANVAS_HEIGHT,
@@ -1053,6 +1080,17 @@ function startGame(options?: {
 
     game.start();
 
+    if (mobileControls && !options?.multiplayerSlots) {
+        // On mobile local mode, drive player one from joystick + boost overlay.
+        game.setPlayerInputResolver((_player, playerIndex) => {
+            if (playerIndex === 0) {
+                return getLocalControlInputState();
+            }
+
+            return undefined;
+        });
+    }
+
     (window as unknown as { game: Game }).game = game;
 
     console.log('Welcome to Neon Rain!');
@@ -1062,3 +1100,21 @@ function startGame(options?: {
 window.addEventListener('keydown', handleMainMenuReturnInput);
 
 showStartMenu();
+
+function getLocalControlInputState(): InputState {
+    const keyboardState = multiplayerLocalInputHandler.getState();
+    const mobileState = mobileControls?.getState();
+
+    if (!mobileState) {
+        return cloneInputState(keyboardState);
+    }
+
+    return {
+        left: keyboardState.left || mobileState.left,
+        right: keyboardState.right || mobileState.right,
+        up: keyboardState.up || mobileState.up,
+        down: keyboardState.down || mobileState.down,
+        dash: keyboardState.dash || mobileState.dash,
+        deployBomb: keyboardState.deployBomb || mobileState.deployBomb,
+    };
+}

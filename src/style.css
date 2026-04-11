@@ -399,6 +399,68 @@ html, body {
   font-size: 0.82rem;
 }
 
+.mobile-controls-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 30;
+  display: none;
+}
+
+.mobile-joystick-base {
+  position: absolute;
+  left: max(14px, env(safe-area-inset-left));
+  bottom: max(18px, env(safe-area-inset-bottom));
+  width: 138px;
+  height: 138px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  background: radial-gradient(circle at 35% 30%, rgba(255, 255, 255, 0.18), rgba(10, 12, 18, 0.82));
+  box-shadow: 0 0 14px rgba(0, 183, 255, 0.22);
+  pointer-events: auto;
+  touch-action: none;
+}
+
+.mobile-joystick-knob {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 58px;
+  height: 58px;
+  margin-left: -29px;
+  margin-top: -29px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.5);
+  background: radial-gradient(circle at 30% 30%, rgba(255, 255, 255, 0.85), rgba(80, 96, 132, 0.9));
+  box-shadow: 0 0 12px rgba(57, 255, 20, 0.2);
+}
+
+.mobile-boost-button {
+  position: absolute;
+  right: max(14px, env(safe-area-inset-right));
+  bottom: max(24px, env(safe-area-inset-bottom));
+  width: 108px;
+  height: 108px;
+  border: 1px solid rgba(255, 255, 255, 0.4);
+  border-radius: 50%;
+  background: radial-gradient(circle at 32% 28%, rgba(255, 255, 255, 0.9), rgba(20, 24, 30, 0.9));
+  color: #0c111a;
+  font-weight: 800;
+  letter-spacing: 0.07em;
+  pointer-events: auto;
+  touch-action: none;
+}
+
+.mobile-boost-button:active {
+  transform: scale(0.96);
+}
+
+@media (pointer: fine) {
+  .mobile-controls-overlay {
+    display: none !important;
+  }
+}
+
 @media (max-width: 640px) {
   .menu-panel {
     padding: 20px;
