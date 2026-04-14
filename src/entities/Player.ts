@@ -174,6 +174,16 @@ export class Player extends Entity {
         this.updateGlow(deltaTime);
     }
 
+    public advanceFromNetworkVelocity(deltaTime: number): void {
+        if (!this.isAlive || !Number.isFinite(deltaTime) || deltaTime <= 0) {
+            return;
+        }
+
+        this.position.x += this.velocity.x * deltaTime;
+        this.position.y += this.velocity.y * deltaTime;
+        this.clampToBounds();
+    }
+
     private resolveInputState(injectedInput?: InputState): InputState {
         if (injectedInput) {
             return injectedInput;

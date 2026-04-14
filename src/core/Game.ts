@@ -570,6 +570,15 @@ export class Game {
             }
         }
 
+        this.players.forEach((player, index) => {
+            const isLocalPlayer = localPlayerIndex !== null && index === localPlayerIndex;
+            if (isLocalPlayer || !player.getIsAlive()) {
+                return;
+            }
+
+            player.advanceFromNetworkVelocity(deltaTime);
+        });
+
         this.updatePlayerTrails(deltaTime);
         this.enemyManager.update(deltaTime);
         this.powerupManager.update(deltaTime);
@@ -1197,9 +1206,9 @@ export class Game {
             const isLocalPlayer = mappedPlayerId === resolvedLocalPlayerId;
             player.applyNetworkSnapshot(playerSnapshot, {
                 interpolatePosition: this.networkRole === 'client',
-                smoothingAlpha: isLocalPlayer ? 0.12 : 0.5,
-                jitterDeadZone: isLocalPlayer ? 2.2 : 0.4,
-                snapDistanceThreshold: isLocalPlayer ? 110 : 160,
+                smoothingAlpha: isLocalPlayer ? 0.14 : 0.3,
+                jitterDeadZone: isLocalPlayer ? 2.5 : 0.8,
+                snapDistanceThreshold: isLocalPlayer ? 220 : 260,
                 preserveVelocity: this.networkRole === 'client' && isLocalPlayer,
             });
         });
