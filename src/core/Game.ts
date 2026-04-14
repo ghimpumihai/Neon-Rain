@@ -1206,9 +1206,9 @@ export class Game {
             const isLocalPlayer = mappedPlayerId === resolvedLocalPlayerId;
             player.applyNetworkSnapshot(playerSnapshot, {
                 interpolatePosition: this.networkRole === 'client',
-                smoothingAlpha: isLocalPlayer ? 0.14 : 0.3,
-                jitterDeadZone: isLocalPlayer ? 2.5 : 0.8,
-                snapDistanceThreshold: isLocalPlayer ? 220 : 260,
+                smoothingAlpha: isLocalPlayer ? 0.18 : 0.25,
+                jitterDeadZone: isLocalPlayer ? 2.5 : 1.1,
+                snapDistanceThreshold: isLocalPlayer ? 320 : 340,
                 preserveVelocity: this.networkRole === 'client' && isLocalPlayer,
             });
         });

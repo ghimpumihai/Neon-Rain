@@ -246,11 +246,13 @@ const NEUTRAL_INPUT_STATE: InputState = {
 };
 const multiplayerLocalInputHandler = new InputHandler(MULTIPLAYER_SHARED_KEYS, 'Net Local');
 const multiplayerRemoteInputByPlayerId = new Map<string, InputState>();
+const multiplayerLastRemoteInputSequenceByPlayerId = new Map<string, number>();
 let multiplayerMatchPlayerOrder: string[] = [];
 let multiplayerLocalPlayerIndex: number | null = null;
 let multiplayerInputSequence = 0;
 let multiplayerInputSyncIntervalId: number | null = null;
 let multiplayerSnapshotTick = 0;
+let multiplayerLastAppliedSnapshotTick = -1;
 let multiplayerSnapshotSyncIntervalId: number | null = null;
 let multiplayerIsHost = false;
 let multiplayerMatchStartPending = false;
@@ -477,10 +479,12 @@ function stopMultiplayerInputSync(): void {
     }
 
     multiplayerRemoteInputByPlayerId.clear();
+    multiplayerLastRemoteInputSequenceByPlayerId.clear();
     multiplayerMatchPlayerOrder = [];
     multiplayerLocalPlayerIndex = null;
     multiplayerInputSequence = 0;
     multiplayerSnapshotTick = 0;
+    multiplayerLastAppliedSnapshotTick = -1;
     multiplayerIsHost = false;
     multiplayerMatchStartPending = false;
 
@@ -589,6 +593,7 @@ function startMultiplayerMatchFromRoom(roomOverride?: RoomSummary): boolean {
     multiplayerLocalPlayerIndex = localPlayerIndex;
     multiplayerInputSequence = 0;
     multiplayerSnapshotTick = 0;
+    multiplayerLastAppliedSnapshotTick = -1;
     multiplayerIsHost = activeRoom.hostPlayerId === multiplayerSelfPlayerId;
 
     if (game) {
@@ -659,6 +664,7 @@ function handleMultiplayerMessage(message: ServerToClientMessage): void {
             multiplayerSelfPlayerId = message.playerId;
             multiplayerRoom = message.room;
             stopMultiplayerInputSync();
+            multiplayerLastAppliedSnapshotTick = -1;
             multiplayerMatchStartPending = false;
             multiplayerStatus = `Joined room ${message.room.code}.`;
             break;
@@ -672,10 +678,12 @@ function handleMultiplayerMessage(message: ServerToClientMessage): void {
             break;
         case 'player_left':
             multiplayerRemoteInputByPlayerId.delete(message.playerId);
+            multiplayerLastRemoteInputSequenceByPlayerId.delete(message.playerId);
             multiplayerStatus = `Player ${message.playerId.slice(0, 6)} left the room.`;
             break;
         case 'host_changed':
             multiplayerStatus = `Host migrated to ${message.hostPlayerId.slice(0, 6)}.`;
+            multiplayerLastAppliedSnapshotTick = -1;
             if (multiplayerRoom) {
                 multiplayerRoom = {
                     ...multiplayerRoom,
@@ -687,6 +695,7 @@ function handleMultiplayerMessage(message: ServerToClientMessage): void {
         case 'match_started':
             multiplayerStatus = `Match started for room ${message.roomCode}. Input sync engaged.`;
             multiplayerRoom = message.room;
+            multiplayerLastAppliedSnapshotTick = -1;
             multiplayerMatchStartPending = true;
             startMultiplayerMatchFromRoom(message.room);
             break;
@@ -697,11 +706,22 @@ function handleMultiplayerMessage(message: ServerToClientMessage): void {
             break;
         case 'input_frame':
             if (message.fromPlayerId !== multiplayerSelfPlayerId) {
+                const lastSequence = multiplayerLastRemoteInputSequenceByPlayerId.get(message.fromPlayerId);
+                if (typeof lastSequence === 'number' && message.sequence <= lastSequence) {
+                    break;
+                }
+
+                multiplayerLastRemoteInputSequenceByPlayerId.set(message.fromPlayerId, message.sequence);
                 multiplayerRemoteInputByPlayerId.set(message.fromPlayerId, cloneInputState(message.input));
             }
             break;
         case 'state_snapshot':
             if (!multiplayerIsHost && game && multiplayerRoom && message.fromPlayerId === multiplayerRoom.hostPlayerId) {
+                if (message.tick <= multiplayerLastAppliedSnapshotTick) {
+                    break;
+                }
+
+                multiplayerLastAppliedSnapshotTick = message.tick;
                 game.applySnapshot(message.snapshot, multiplayerMatchPlayerOrder, multiplayerSelfPlayerId);
                 applyResponsiveCanvasLayout();
             }
