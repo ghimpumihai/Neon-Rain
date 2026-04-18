@@ -28,6 +28,18 @@ import {
 
 type PlayerInputResolver = (player: Player, index: number) => InputState | undefined;
 type NetworkRole = 'local' | 'host' | 'client';
+type ProcessedInputSequenceLookup = Map<string, number> | Record<string, number>;
+
+interface InputHistoryFrame {
+    sequence: number;
+    input: InputState;
+}
+
+interface SnapshotApplyOptions {
+    localInputAckSequence?: number;
+    localInputHistory?: InputHistoryFrame[];
+    localReplayDeltaSeconds?: number;
+}
 
 /**
  * The main Game class - the brain of Neon Rain
@@ -562,17 +574,21 @@ export class Game {
         this.gameTime += deltaTime;
 
         const localPlayerIndex = this.getLocalPlayerIndex();
-        if (localPlayerIndex !== null) {
-            const localPlayer = this.players[localPlayerIndex];
-            if (localPlayer?.getIsAlive()) {
-                const resolvedInput = this.playerInputResolver?.(localPlayer, localPlayerIndex);
-                localPlayer.update(deltaTime, resolvedInput);
-            }
-        }
-
         this.players.forEach((player, index) => {
+            if (!player.getIsAlive()) {
+                return;
+            }
+
+            const resolvedInput = this.playerInputResolver?.(player, index);
             const isLocalPlayer = localPlayerIndex !== null && index === localPlayerIndex;
-            if (isLocalPlayer || !player.getIsAlive()) {
+
+            if (isLocalPlayer) {
+                player.update(deltaTime, resolvedInput);
+                return;
+            }
+
+            if (resolvedInput !== undefined) {
+                player.update(deltaTime, resolvedInput);
                 return;
             }
 
@@ -1114,24 +1130,38 @@ export class Game {
         return player.getCurrentInputState();
     }
 
-    public serializeSnapshot(playerOrder?: string[]): GameSnapshot {
+    public serializeSnapshot(
+        playerOrder?: string[],
+        processedInputSequencesByPlayerId?: ProcessedInputSequenceLookup
+    ): GameSnapshot {
         const resolvedPlayerOrder = this.resolvePlayerOrder(playerOrder);
 
-        const players: PlayerSnapshot[] = this.players.map((player, index) => ({
-            playerId: resolvedPlayerOrder[index],
-            position: {
-                x: player.position.x,
-                y: player.position.y,
-            },
-            velocity: {
-                x: player.velocity.x,
-                y: player.velocity.y,
-            },
-            health: player.getHealth(),
-            isAlive: player.getIsAlive(),
-            isShielded: player.getIsShielded(),
-            storedBombs: player.getStoredBombs(),
-        }));
+        const players: PlayerSnapshot[] = this.players.map((player, index) => {
+            const mappedPlayerId = resolvedPlayerOrder[index];
+            const lastProcessedInputSequence = this.resolveLastProcessedInputSequence(
+                mappedPlayerId,
+                processedInputSequencesByPlayerId
+            );
+
+            return {
+                playerId: mappedPlayerId,
+                position: {
+                    x: player.position.x,
+                    y: player.position.y,
+                },
+                velocity: {
+                    x: player.velocity.x,
+                    y: player.velocity.y,
+                },
+                ...(typeof lastProcessedInputSequence === 'number'
+                    ? { lastProcessedInputSequence }
+                    : {}),
+                health: player.getHealth(),
+                isAlive: player.getIsAlive(),
+                isShielded: player.getIsShielded(),
+                storedBombs: player.getStoredBombs(),
+            };
+        });
 
         const projectiles: ProjectileSnapshot[] = this.projectilePool.getActiveObjects().map((projectile, index) => ({
             projectileId: `projectile-${index}`,
@@ -1177,7 +1207,8 @@ export class Game {
     public applySnapshot(
         snapshot: GameSnapshot,
         playerOrder?: string[],
-        localPlayerId?: string | null
+        localPlayerId?: string | null,
+        options?: SnapshotApplyOptions
     ): void {
         if (
             this.networkRole === 'local'
@@ -1189,6 +1220,14 @@ export class Game {
 
         const resolvedPlayerOrder = this.resolvePlayerOrder(playerOrder);
         const resolvedLocalPlayerId = localPlayerId ?? this.networkLocalPlayerId;
+        const hasLocalInputAck =
+            typeof options?.localInputAckSequence === 'number'
+            && Number.isFinite(options.localInputAckSequence);
+        const localInputAckSequence = hasLocalInputAck
+            ? Math.floor(options.localInputAckSequence as number)
+            : undefined;
+        const localInputHistory = options?.localInputHistory ?? [];
+        const replayDeltaSeconds = Math.max(1 / 240, options?.localReplayDeltaSeconds ?? 1 / 60);
 
         this.gameTime = snapshot.gameTimeSeconds;
         this.score = snapshot.score;
@@ -1204,13 +1243,32 @@ export class Game {
             }
 
             const isLocalPlayer = mappedPlayerId === resolvedLocalPlayerId;
+            const shouldReconcileLocalPlayer =
+                this.networkRole === 'client'
+                && isLocalPlayer
+                && typeof localInputAckSequence === 'number';
+
             player.applyNetworkSnapshot(playerSnapshot, {
-                interpolatePosition: this.networkRole === 'client',
-                smoothingAlpha: isLocalPlayer ? 0.18 : 0.25,
-                jitterDeadZone: isLocalPlayer ? 2.5 : 1.1,
-                snapDistanceThreshold: isLocalPlayer ? 320 : 340,
-                preserveVelocity: this.networkRole === 'client' && isLocalPlayer,
+                interpolatePosition: this.networkRole === 'client' && !shouldReconcileLocalPlayer,
+                smoothingAlpha: isLocalPlayer ? 0.18 : 0.32,
+                jitterDeadZone: isLocalPlayer ? 1.4 : 0.9,
+                snapDistanceThreshold: isLocalPlayer ? 180 : 260,
+                preserveVelocity: this.networkRole === 'client' && isLocalPlayer && !shouldReconcileLocalPlayer,
             });
+
+            if (
+                shouldReconcileLocalPlayer
+                && this.gameState === GameState.PLAYING
+                && localInputHistory.length > 0
+            ) {
+                for (const inputFrame of localInputHistory) {
+                    if (inputFrame.sequence <= localInputAckSequence) {
+                        continue;
+                    }
+
+                    player.update(replayDeltaSeconds, inputFrame.input);
+                }
+            }
         });
 
         this.winner = this.players.find(player => player.getIsAlive()) ?? null;
@@ -1284,6 +1342,25 @@ export class Game {
         }
 
         return this.players[index] ?? null;
+    }
+
+    private resolveLastProcessedInputSequence(
+        playerId: string,
+        processedInputSequencesByPlayerId?: ProcessedInputSequenceLookup
+    ): number | undefined {
+        if (!processedInputSequencesByPlayerId) {
+            return undefined;
+        }
+
+        const sequence = processedInputSequencesByPlayerId instanceof Map
+            ? processedInputSequencesByPlayerId.get(playerId)
+            : (processedInputSequencesByPlayerId as Record<string, number | undefined>)[playerId];
+
+        if (typeof sequence !== 'number' || !Number.isFinite(sequence)) {
+            return undefined;
+        }
+
+        return Math.floor(sequence);
     }
 
     private getLocalPlayerIndex(): number | null {

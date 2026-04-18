@@ -28,6 +28,11 @@ import {
 import { InputHandler, type InputState, type KeyBindings } from './systems/InputHandler';
 import { MobileControls } from './systems/MobileControls';
 
+interface InputHistoryFrame {
+    sequence: number;
+    input: InputState;
+}
+
 /**
  * Neon Rain - Main Entry Point
  * A 2D infinite dodger game with neon visuals
@@ -236,20 +241,14 @@ let multiplayerRoom: RoomSummary | null = null;
 let multiplayerStatus = 'Connect to create or join a room.';
 let multiplayerDisplayName = `Player-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
 let multiplayerJoinRoomCode = '';
-const NEUTRAL_INPUT_STATE: InputState = {
-    left: false,
-    right: false,
-    up: false,
-    down: false,
-    dash: false,
-    deployBomb: false,
-};
 const multiplayerLocalInputHandler = new InputHandler(MULTIPLAYER_SHARED_KEYS, 'Net Local');
 const multiplayerRemoteInputByPlayerId = new Map<string, InputState>();
 const multiplayerLastRemoteInputSequenceByPlayerId = new Map<string, number>();
+const multiplayerLocalInputHistory: InputHistoryFrame[] = [];
 let multiplayerMatchPlayerOrder: string[] = [];
 let multiplayerLocalPlayerIndex: number | null = null;
 let multiplayerInputSequence = 0;
+let multiplayerLastAcknowledgedLocalInputSequence = -1;
 let multiplayerInputSyncIntervalId: number | null = null;
 let multiplayerSnapshotTick = 0;
 let multiplayerLastAppliedSnapshotTick = -1;
@@ -272,6 +271,8 @@ const CANVAS_VIEWPORT_PADDING_PX = 12;
 const MOBILE_GAMEPLAY_CONTROLS_RESERVE_HEIGHT_PX = 130;
 const MULTIPLAYER_INPUT_SEND_INTERVAL_MS = 16;
 const MULTIPLAYER_SNAPSHOT_SEND_INTERVAL_MS = 33;
+const MULTIPLAYER_REPLAY_FRAME_SECONDS = MULTIPLAYER_INPUT_SEND_INTERVAL_MS / 1000;
+const MULTIPLAYER_MAX_INPUT_HISTORY = 300;
 let mobileGameOverUiIntervalId: number | null = null;
 let mobileGameplayControlsVisible = false;
 let mobileGameOverActionsVisible = false;
@@ -467,6 +468,38 @@ function cloneInputState(inputState: InputState): InputState {
     };
 }
 
+function recordLocalInputFrame(sequence: number, inputState: InputState): void {
+    multiplayerLocalInputHistory.push({
+        sequence,
+        input: cloneInputState(inputState),
+    });
+
+    const overflow = multiplayerLocalInputHistory.length - MULTIPLAYER_MAX_INPUT_HISTORY;
+    if (overflow > 0) {
+        multiplayerLocalInputHistory.splice(0, overflow);
+    }
+}
+
+function discardAcknowledgedLocalInputFrames(ackSequence: number): void {
+    if (!Number.isFinite(ackSequence)) {
+        return;
+    }
+
+    const normalizedAckSequence = Math.floor(ackSequence);
+    if (normalizedAckSequence <= multiplayerLastAcknowledgedLocalInputSequence) {
+        return;
+    }
+
+    multiplayerLastAcknowledgedLocalInputSequence = normalizedAckSequence;
+
+    while (
+        multiplayerLocalInputHistory.length > 0
+        && multiplayerLocalInputHistory[0].sequence <= normalizedAckSequence
+    ) {
+        multiplayerLocalInputHistory.shift();
+    }
+}
+
 function stopMultiplayerInputSync(): void {
     if (multiplayerInputSyncIntervalId !== null) {
         window.clearInterval(multiplayerInputSyncIntervalId);
@@ -483,6 +516,8 @@ function stopMultiplayerInputSync(): void {
     multiplayerMatchPlayerOrder = [];
     multiplayerLocalPlayerIndex = null;
     multiplayerInputSequence = 0;
+    multiplayerLocalInputHistory.length = 0;
+    multiplayerLastAcknowledgedLocalInputSequence = -1;
     multiplayerSnapshotTick = 0;
     multiplayerLastAppliedSnapshotTick = -1;
     multiplayerIsHost = false;
@@ -517,14 +552,15 @@ function startMatchTransportLoops(): void {
                 return;
             }
 
-            const snapshot = game.serializeSnapshot(multiplayerMatchPlayerOrder);
+            const snapshot = game.serializeSnapshot(
+                multiplayerMatchPlayerOrder,
+                multiplayerLastRemoteInputSequenceByPlayerId
+            );
             const sent = networkClient.sendSnapshot(multiplayerSnapshotTick, snapshot);
             if (sent) {
                 multiplayerSnapshotTick++;
             }
         }, MULTIPLAYER_SNAPSHOT_SEND_INTERVAL_MS);
-
-        return;
     }
 
     multiplayerInputSyncIntervalId = window.setInterval(() => {
@@ -533,10 +569,15 @@ function startMatchTransportLoops(): void {
         }
 
         const localInput = getLocalControlInputState();
+        const currentSequence = multiplayerInputSequence;
 
-        const sent = networkClient.sendInputFrame(multiplayerInputSequence, localInput);
+        const sent = networkClient.sendInputFrame(currentSequence, localInput);
         if (sent) {
-            multiplayerInputSequence++;
+            if (!multiplayerIsHost) {
+                recordLocalInputFrame(currentSequence, localInput);
+            }
+
+            multiplayerInputSequence = currentSequence + 1;
         }
     }, MULTIPLAYER_INPUT_SEND_INTERVAL_MS);
 }
@@ -592,6 +633,8 @@ function startMultiplayerMatchFromRoom(roomOverride?: RoomSummary): boolean {
     multiplayerMatchPlayerOrder = playerOrder;
     multiplayerLocalPlayerIndex = localPlayerIndex;
     multiplayerInputSequence = 0;
+    multiplayerLocalInputHistory.length = 0;
+    multiplayerLastAcknowledgedLocalInputSequence = -1;
     multiplayerSnapshotTick = 0;
     multiplayerLastAppliedSnapshotTick = -1;
     multiplayerIsHost = activeRoom.hostPlayerId === multiplayerSelfPlayerId;
@@ -624,21 +667,21 @@ function startMultiplayerMatchFromRoom(roomOverride?: RoomSummary): boolean {
     game.setPlayerInputResolver((_player, playerIndex) => {
         const mappedPlayerId = multiplayerMatchPlayerOrder[playerIndex];
         if (!mappedPlayerId) {
-            return NEUTRAL_INPUT_STATE;
+            return undefined;
         }
 
         if (mappedPlayerId === multiplayerSelfPlayerId) {
             return getLocalControlInputState();
         }
 
-        return multiplayerRemoteInputByPlayerId.get(mappedPlayerId) ?? NEUTRAL_INPUT_STATE;
+        return multiplayerRemoteInputByPlayerId.get(mappedPlayerId);
     });
 
     startMatchTransportLoops();
 
     multiplayerStatus = multiplayerIsHost
-        ? 'You are host: authoritative snapshots broadcasting.'
-        : `Client sync active in slot ${multiplayerLocalPlayerIndex + 1}.`;
+        ? 'You are host: authoritative simulation with input relay active.'
+        : `Client prediction active in slot ${multiplayerLocalPlayerIndex + 1}.`;
 
     multiplayerMatchStartPending = false;
     return true;
@@ -722,7 +765,28 @@ function handleMultiplayerMessage(message: ServerToClientMessage): void {
                 }
 
                 multiplayerLastAppliedSnapshotTick = message.tick;
-                game.applySnapshot(message.snapshot, multiplayerMatchPlayerOrder, multiplayerSelfPlayerId);
+
+                const localSnapshot = multiplayerSelfPlayerId
+                    ? message.snapshot.players.find(player => player.playerId === multiplayerSelfPlayerId)
+                    : undefined;
+
+                if (typeof localSnapshot?.lastProcessedInputSequence === 'number') {
+                    discardAcknowledgedLocalInputFrames(localSnapshot.lastProcessedInputSequence);
+
+                    game.applySnapshot(
+                        message.snapshot,
+                        multiplayerMatchPlayerOrder,
+                        multiplayerSelfPlayerId,
+                        {
+                            localInputAckSequence: multiplayerLastAcknowledgedLocalInputSequence,
+                            localInputHistory: multiplayerLocalInputHistory,
+                            localReplayDeltaSeconds: MULTIPLAYER_REPLAY_FRAME_SECONDS,
+                        }
+                    );
+                } else {
+                    game.applySnapshot(message.snapshot, multiplayerMatchPlayerOrder, multiplayerSelfPlayerId);
+                }
+
                 applyResponsiveCanvasLayout();
             }
             break;

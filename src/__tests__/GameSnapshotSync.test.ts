@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { Game } from '../core/Game';
 import { GameState } from '../core/GameState';
+import type { InputState } from '../systems/InputHandler';
 
 const mockContext = {
     fillStyle: '#111',
@@ -88,6 +89,18 @@ describe('Game multiplayer snapshot sync', () => {
         expect(uniqueXPositions.size).toBe(4);
     });
 
+    it('embeds last processed input sequence metadata in snapshots', () => {
+        const game = new Game('gameCanvas');
+
+        const snapshot = game.serializeSnapshot(
+            ['p-host', 'p-peer'],
+            new Map<string, number>([['p-peer', 27]])
+        );
+
+        expect(snapshot.players[0].lastProcessedInputSequence).toBeUndefined();
+        expect(snapshot.players[1].lastProcessedInputSequence).toBe(27);
+    });
+
     it('keeps canonical world size in client role even when snapshot carries different dimensions', () => {
         const game = new Game('gameCanvas');
         game.setNetworkSyncContext({ role: 'client', playerOrder: ['p-host', 'p-peer'], localPlayerId: 'p-peer' });
@@ -100,5 +113,40 @@ describe('Game multiplayer snapshot sync', () => {
 
         expect(game.getConfig().canvasWidth).toBe(800);
         expect(game.getConfig().canvasHeight).toBe(600);
+    });
+
+    it('replays pending local inputs after client snapshot acknowledgement', () => {
+        const game = new Game('gameCanvas');
+        game.setNetworkSyncContext({ role: 'client', playerOrder: ['p-host', 'p-peer'], localPlayerId: 'p-peer' });
+
+        const snapshot = game.serializeSnapshot(['p-host', 'p-peer']);
+        const localPlayerSnapshot = snapshot.players[1];
+        localPlayerSnapshot.position.x = 200;
+        localPlayerSnapshot.position.y = 520;
+        localPlayerSnapshot.velocity.x = 0;
+        localPlayerSnapshot.velocity.y = 0;
+        localPlayerSnapshot.lastProcessedInputSequence = 1;
+
+        const movingRightInput: InputState = {
+            left: false,
+            right: true,
+            up: false,
+            down: false,
+            dash: false,
+            deployBomb: false,
+        };
+
+        game.applySnapshot(snapshot, ['p-host', 'p-peer'], 'p-peer', {
+            localInputAckSequence: 1,
+            localInputHistory: [
+                { sequence: 1, input: movingRightInput },
+                { sequence: 2, input: movingRightInput },
+                { sequence: 3, input: movingRightInput },
+            ],
+            localReplayDeltaSeconds: 1 / 60,
+        });
+
+        const players = (game as unknown as { players: Array<{ position: { x: number; y: number } }> }).players;
+        expect(players[1].position.x).toBeGreaterThan(localPlayerSnapshot.position.x);
     });
 });

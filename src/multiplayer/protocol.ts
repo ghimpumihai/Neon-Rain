@@ -28,6 +28,7 @@ export interface PlayerSnapshot {
     playerId: string;
     position: Vector2State;
     velocity: Vector2State;
+    lastProcessedInputSequence?: number;
     health: number;
     isAlive: boolean;
     isShielded: boolean;
