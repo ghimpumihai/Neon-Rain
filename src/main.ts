@@ -249,7 +249,7 @@ let multiplayerMatchPlayerOrder: string[] = [];
 let multiplayerLocalPlayerIndex: number | null = null;
 let multiplayerInputSequence = 0;
 let multiplayerLastAcknowledgedLocalInputSequence = -1;
-let multiplayerInputSyncIntervalId: number | null = null;
+let multiplayerLastDispatchedInputState: InputState | null = null;
 let multiplayerSnapshotTick = 0;
 let multiplayerLastAppliedSnapshotTick = -1;
 let multiplayerSnapshotSyncIntervalId: number | null = null;
@@ -269,9 +269,8 @@ const canvas = canvasElement;
 const mobileControls = isMobileDevice() ? new MobileControls() : null;
 const CANVAS_VIEWPORT_PADDING_PX = 12;
 const MOBILE_GAMEPLAY_CONTROLS_RESERVE_HEIGHT_PX = 130;
-const MULTIPLAYER_INPUT_SEND_INTERVAL_MS = 16;
 const MULTIPLAYER_SNAPSHOT_SEND_INTERVAL_MS = 33;
-const MULTIPLAYER_REPLAY_FRAME_SECONDS = MULTIPLAYER_INPUT_SEND_INTERVAL_MS / 1000;
+const MULTIPLAYER_REPLAY_FRAME_SECONDS = 1 / 60;
 const MULTIPLAYER_MAX_INPUT_HISTORY = 300;
 let mobileGameOverUiIntervalId: number | null = null;
 let mobileGameplayControlsVisible = false;
@@ -468,6 +467,15 @@ function cloneInputState(inputState: InputState): InputState {
     };
 }
 
+function areInputStatesEqual(first: InputState, second: InputState): boolean {
+    return first.left === second.left
+        && first.right === second.right
+        && first.up === second.up
+        && first.down === second.down
+        && first.dash === second.dash
+        && first.deployBomb === second.deployBomb;
+}
+
 function recordLocalInputFrame(sequence: number, inputState: InputState): void {
     multiplayerLocalInputHistory.push({
         sequence,
@@ -500,12 +508,41 @@ function discardAcknowledgedLocalInputFrames(ackSequence: number): void {
     }
 }
 
-function stopMultiplayerInputSync(): void {
-    if (multiplayerInputSyncIntervalId !== null) {
-        window.clearInterval(multiplayerInputSyncIntervalId);
-        multiplayerInputSyncIntervalId = null;
+function dispatchLocalInputImmediately(inputState: InputState): void {
+    if (!networkClient.getIsConnected() || multiplayerLocalPlayerIndex === null || !multiplayerSelfPlayerId) {
+        return;
     }
 
+    if (multiplayerMatchPlayerOrder.length === 0 || activeRuntimeRole === 'local') {
+        return;
+    }
+
+    const mappedPlayerId = multiplayerMatchPlayerOrder[multiplayerLocalPlayerIndex];
+    if (!mappedPlayerId || mappedPlayerId !== multiplayerSelfPlayerId) {
+        return;
+    }
+
+    if (multiplayerLastDispatchedInputState && areInputStatesEqual(multiplayerLastDispatchedInputState, inputState)) {
+        return;
+    }
+
+    const currentSequence = multiplayerInputSequence;
+    const inputSnapshot = cloneInputState(inputState);
+    const sent = networkClient.sendInputFrame(currentSequence, inputSnapshot);
+
+    if (!sent) {
+        return;
+    }
+
+    if (!multiplayerIsHost) {
+        recordLocalInputFrame(currentSequence, inputSnapshot);
+    }
+
+    multiplayerInputSequence = currentSequence + 1;
+    multiplayerLastDispatchedInputState = inputSnapshot;
+}
+
+function stopMultiplayerInputSync(): void {
     if (multiplayerSnapshotSyncIntervalId !== null) {
         window.clearInterval(multiplayerSnapshotSyncIntervalId);
         multiplayerSnapshotSyncIntervalId = null;
@@ -516,6 +553,7 @@ function stopMultiplayerInputSync(): void {
     multiplayerMatchPlayerOrder = [];
     multiplayerLocalPlayerIndex = null;
     multiplayerInputSequence = 0;
+    multiplayerLastDispatchedInputState = null;
     multiplayerLocalInputHistory.length = 0;
     multiplayerLastAcknowledgedLocalInputSequence = -1;
     multiplayerSnapshotTick = 0;
@@ -532,15 +570,12 @@ function stopMultiplayerInputSync(): void {
 }
 
 function startMatchTransportLoops(): void {
-    if (multiplayerInputSyncIntervalId !== null) {
-        window.clearInterval(multiplayerInputSyncIntervalId);
-        multiplayerInputSyncIntervalId = null;
-    }
-
     if (multiplayerSnapshotSyncIntervalId !== null) {
         window.clearInterval(multiplayerSnapshotSyncIntervalId);
         multiplayerSnapshotSyncIntervalId = null;
     }
+
+    multiplayerLastDispatchedInputState = null;
 
     if (!game) {
         return;
@@ -562,24 +597,6 @@ function startMatchTransportLoops(): void {
             }
         }, MULTIPLAYER_SNAPSHOT_SEND_INTERVAL_MS);
     }
-
-    multiplayerInputSyncIntervalId = window.setInterval(() => {
-        if (multiplayerLocalPlayerIndex === null) {
-            return;
-        }
-
-        const localInput = getLocalControlInputState();
-        const currentSequence = multiplayerInputSequence;
-
-        const sent = networkClient.sendInputFrame(currentSequence, localInput);
-        if (sent) {
-            if (!multiplayerIsHost) {
-                recordLocalInputFrame(currentSequence, localInput);
-            }
-
-            multiplayerInputSequence = currentSequence + 1;
-        }
-    }, MULTIPLAYER_INPUT_SEND_INTERVAL_MS);
 }
 
 function refreshHostRoleForActiveMatch(): void {
@@ -633,6 +650,7 @@ function startMultiplayerMatchFromRoom(roomOverride?: RoomSummary): boolean {
     multiplayerMatchPlayerOrder = playerOrder;
     multiplayerLocalPlayerIndex = localPlayerIndex;
     multiplayerInputSequence = 0;
+    multiplayerLastDispatchedInputState = null;
     multiplayerLocalInputHistory.length = 0;
     multiplayerLastAcknowledgedLocalInputSequence = -1;
     multiplayerSnapshotTick = 0;
@@ -1353,16 +1371,18 @@ function getLocalControlInputState(): InputState {
     const keyboardState = multiplayerLocalInputHandler.getState();
     const mobileState = mobileControls?.getState();
 
-    if (!mobileState) {
-        return cloneInputState(keyboardState);
-    }
+    const resolvedInput = !mobileState
+        ? cloneInputState(keyboardState)
+        : {
+            left: keyboardState.left || mobileState.left,
+            right: keyboardState.right || mobileState.right,
+            up: keyboardState.up || mobileState.up,
+            down: keyboardState.down || mobileState.down,
+            dash: keyboardState.dash || mobileState.dash,
+            deployBomb: keyboardState.deployBomb || mobileState.deployBomb,
+        };
 
-    return {
-        left: keyboardState.left || mobileState.left,
-        right: keyboardState.right || mobileState.right,
-        up: keyboardState.up || mobileState.up,
-        down: keyboardState.down || mobileState.down,
-        dash: keyboardState.dash || mobileState.dash,
-        deployBomb: keyboardState.deployBomb || mobileState.deployBomb,
-    };
+    dispatchLocalInputImmediately(resolvedInput);
+
+    return resolvedInput;
 }

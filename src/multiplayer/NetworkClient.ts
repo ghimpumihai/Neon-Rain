@@ -223,6 +223,12 @@ export class NetworkClient {
         }
 
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+
+        if (this.shouldUseDevelopmentBackendFallback()) {
+            const hostName = this.formatHostNameForUrl(window.location.hostname);
+            return `${protocol}//${hostName}:3000/ws`;
+        }
+
         return `${protocol}//${window.location.host}/ws`;
     }
 
@@ -230,6 +236,27 @@ export class NetworkClient {
         const maybeEnv = import.meta.env as ImportMetaEnv & { VITE_WS_URL?: string };
         const configured = maybeEnv.VITE_WS_URL?.trim();
         return configured && configured.length > 0 ? configured : undefined;
+    }
+
+    private shouldUseDevelopmentBackendFallback(): boolean {
+        const maybeEnv = import.meta.env as ImportMetaEnv & { DEV?: boolean };
+        if (maybeEnv.DEV !== true) {
+            return false;
+        }
+
+        const currentPort = window.location.port.trim();
+        return currentPort.length > 0 && currentPort !== '3000';
+    }
+
+    private formatHostNameForUrl(hostName: string): string {
+        const normalizedHostName = hostName.trim();
+
+        // IPv6 hosts need square brackets when used with explicit ports.
+        if (normalizedHostName.includes(':')) {
+            return `[${normalizedHostName}]`;
+        }
+
+        return normalizedHostName;
     }
 
     private emitConnectionStatus(connected: boolean): void {
