@@ -298,7 +298,7 @@ export class Game {
         }
 
         if (this.gameState === GameState.GAME_OVER) {
-            if (event.code === 'Space' || event.code === 'Enter') {
+            if (event.code === 'Space' || event.key === ' ' || event.code === 'Enter' || event.key === 'Enter') {
                 this.restart();
             }
         }

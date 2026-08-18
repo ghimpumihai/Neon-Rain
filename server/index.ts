@@ -566,6 +566,13 @@ function endMatch(roomCode: string): void {
     room.started = false;
     room.updatedAtMs = Date.now();
 
+    room.playerIds.forEach(playerId => {
+        const client = clientsById.get(playerId);
+        if (client) {
+            client.ready = false;
+        }
+    });
+
     stopServerLoop(roomCode);
     sendRoomUpdate(roomCode);
 }

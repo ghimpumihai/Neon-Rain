@@ -395,14 +395,15 @@ mobileRestartBtn?.addEventListener('click', () => {
         return;
     }
 
-    if (activeRuntimeRole !== 'local') {
-        multiplayerStatus = 'Round over. Back in lobby for rematch.';
+    if (activeRuntimeRole !== 'local' && multiplayerRoom) {
         returnToMainMenu();
         showMultiplayerMenu();
+        networkClient.setReady(true);
         return;
     }
 
     game.restart();
+    updateMobileUiForGameState();
 });
 
 mobileMenuBtn?.addEventListener('click', () => {
@@ -411,6 +412,9 @@ mobileMenuBtn?.addEventListener('click', () => {
     }
 
     returnToMainMenu();
+    if (multiplayerRoom) {
+        showMultiplayerMenu();
+    }
 });
 
 function applyResponsiveCanvasLayout(): void {
@@ -887,14 +891,9 @@ function applyTickUpdate(message: TickUpdateMessage): void {
                 const winnerLabel = event.winnerPlayerId === multiplayerSelfPlayerId
                     ? 'You'
                     : `Player ${event.winnerPlayerId.slice(0, 6)}`;
-                multiplayerStatus = `${winnerLabel} won the round.`;
+                multiplayerStatus = `${winnerLabel} won the round! Press SPACE for Rematch.`;
             } else {
-                multiplayerStatus = 'Round ended in a draw.';
-            }
-
-            if (activeRuntimeRole !== 'local') {
-                returnToMainMenu();
-                showMultiplayerMenu();
+                multiplayerStatus = 'Round ended in a draw. Press SPACE for Rematch.';
             }
         }
     });
@@ -1563,6 +1562,9 @@ function handleMainMenuReturnInput(event: KeyboardEvent): void {
     if (game.getGameState() !== GameState.GAME_OVER) return;
 
     returnToMainMenu();
+    if (multiplayerRoom) {
+        showMultiplayerMenu();
+    }
 }
 
 function startGame(options?: {
@@ -1634,7 +1636,38 @@ function startGame(options?: {
     console.log('Tip: Access the game instance via window.game in the console');
 }
 
+function handleRematchInput(event: KeyboardEvent): void {
+    const isSpace = event.code === 'Space' || event.key === ' ';
+    if (!isSpace) return;
+
+    const activeEl = document.activeElement;
+    if (activeEl && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA')) {
+        return;
+    }
+
+    // On Game Over screen:
+    if (game && game.getGameState() === GameState.GAME_OVER) {
+        event.preventDefault();
+
+        // In multiplayer: return to lobby AND immediately set player as ready!
+        if (activeRuntimeRole !== 'local' && multiplayerRoom) {
+            returnToMainMenu();
+            showMultiplayerMenu();
+            networkClient.setReady(true);
+            return;
+        }
+
+        // In local mode: restart round
+        if (activeRuntimeRole === 'local') {
+            game.restart();
+            updateMobileUiForGameState();
+            return;
+        }
+    }
+}
+
 window.addEventListener('keydown', handleMainMenuReturnInput);
+window.addEventListener('keydown', handleRematchInput);
 window.addEventListener('resize', handleViewportResize);
 window.addEventListener('orientationchange', handleViewportResize);
 
