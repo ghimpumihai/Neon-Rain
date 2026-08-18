@@ -140,10 +140,22 @@ export class EnemyManager {
     }
 
     public applySnapshotEnemies(snapshots: EnemySnapshot[]): void {
-        this.enemyPool.clear();
+        const activeEnemies = this.enemyPool.getActiveObjects();
 
-        snapshots.forEach(snapshot => {
-            const enemy = this.enemyPool.get();
+        while (activeEnemies.length > snapshots.length) {
+            const enemy = activeEnemies.pop();
+            if (enemy) this.enemyPool.release(enemy);
+        }
+
+        while (activeEnemies.length < snapshots.length) {
+            this.enemyPool.get();
+        }
+
+        const currentActive = this.enemyPool.getActiveObjects();
+        snapshots.forEach((snapshot, index) => {
+            const enemy = currentActive[index];
+            if (!enemy) return;
+
             enemy.initialize(
                 snapshot.position.x,
                 this.config.canvasHeight,

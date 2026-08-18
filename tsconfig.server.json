@@ -19,6 +19,7 @@
     },
     "include": [
         "server/**/*.ts",
-        "src/multiplayer/protocol.ts"
+        "src/multiplayer/protocol.ts",
+        "src/game/physics.ts"
     ]
 }

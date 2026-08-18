@@ -618,6 +618,29 @@ export class Player extends Entity {
         }
     }
 
+    public setInterpolatedState(state: {
+        x: number;
+        y: number;
+        vx?: number;
+        vy?: number;
+        health?: number;
+        isAlive?: boolean;
+        isShielded?: boolean;
+        storedBombs?: number;
+    }): void {
+        this.position.x = state.x;
+        this.position.y = state.y;
+        if (typeof state.vx === 'number') this.velocity.x = state.vx;
+        if (typeof state.vy === 'number') this.velocity.y = state.vy;
+        if (typeof state.health === 'number') this.health = Math.max(0, Math.min(this.maxHealth, state.health));
+        if (typeof state.isAlive === 'boolean') this.isAlive = state.isAlive;
+        if (typeof state.isShielded === 'boolean') this.isShielded = state.isShielded;
+        if (typeof state.storedBombs === 'number') {
+            this.storedBombs = Math.max(0, Math.floor(state.storedBombs));
+        }
+        this.clampToBounds();
+    }
+
     public kill(): void { this.isAlive = false; }
     public reset(): void {
         this.position.x = this.startX;

@@ -6,9 +6,27 @@ import { NetworkClient } from './multiplayer/NetworkClient';
 import {
     MAX_ROOM_PLAYERS,
     createDefaultCustomization,
+    type GameEvent,
+    type GameSnapshot,
     type RoomSummary,
     type ServerToClientMessage,
+    type TickObstacleState,
+    type TickPlayerState,
+    type TickProjectileState,
+    type TickPowerupState,
+    type TickBombState,
+    type TickUpdateMessage,
 } from './multiplayer/protocol';
+import {
+    PLAYER_SIZE,
+    SERVER_TICK_RATE,
+    SERVER_WORLD_HEIGHT,
+    SERVER_WORLD_WIDTH,
+    advancePlayerWithVelocity,
+    createSpawnPosition,
+    lerp,
+    type SimPlayerState,
+} from './game/physics';
 import {
     CUBE_HATS,
     CUBE_MODELS,
@@ -31,6 +49,19 @@ import { MobileControls } from './systems/MobileControls';
 interface InputHistoryFrame {
     sequence: number;
     input: InputState;
+    dt?: number;
+}
+
+interface TickHistoryFrame {
+    tick: number;
+    serverTimeMs: number;
+    players: TickPlayerState[];
+    playersById: Map<string, TickPlayerState>;
+    obstacles: TickObstacleState[];
+    powerups: TickPowerupState[];
+    projectiles: TickProjectileState[];
+    bombs: TickBombState[];
+    events: GameEvent[];
 }
 
 /**
@@ -242,18 +273,16 @@ let multiplayerStatus = 'Connect to create or join a room.';
 let multiplayerDisplayName = `Player-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
 let multiplayerJoinRoomCode = '';
 const multiplayerLocalInputHandler = new InputHandler(MULTIPLAYER_SHARED_KEYS, 'Net Local');
-const multiplayerRemoteInputByPlayerId = new Map<string, InputState>();
-const multiplayerLastRemoteInputSequenceByPlayerId = new Map<string, number>();
 const multiplayerLocalInputHistory: InputHistoryFrame[] = [];
 let multiplayerMatchPlayerOrder: string[] = [];
 let multiplayerLocalPlayerIndex: number | null = null;
 let multiplayerInputSequence = 0;
 let multiplayerLastAcknowledgedLocalInputSequence = -1;
 let multiplayerLastDispatchedInputState: InputState | null = null;
-let multiplayerSnapshotTick = 0;
-let multiplayerLastAppliedSnapshotTick = -1;
-let multiplayerSnapshotSyncIntervalId: number | null = null;
-let multiplayerIsHost = false;
+let multiplayerLastReceivedTick = -1;
+let multiplayerServerTimeOffsetMs = 0;
+let multiplayerHasServerClockSync = false;
+const multiplayerTickHistory: TickHistoryFrame[] = [];
 let multiplayerMatchStartPending = false;
 let activeRuntimeRole: 'local' | 'host' | 'client' = 'local';
 
@@ -269,9 +298,10 @@ const canvas = canvasElement;
 const mobileControls = isMobileDevice() ? new MobileControls() : null;
 const CANVAS_VIEWPORT_PADDING_PX = 12;
 const MOBILE_GAMEPLAY_CONTROLS_RESERVE_HEIGHT_PX = 130;
-const MULTIPLAYER_SNAPSHOT_SEND_INTERVAL_MS = 33;
 const MULTIPLAYER_REPLAY_FRAME_SECONDS = 1 / 60;
 const MULTIPLAYER_MAX_INPUT_HISTORY = 300;
+const MULTIPLAYER_INTERPOLATION_DELAY_MS = 45;
+const MULTIPLAYER_MAX_EXTRAPOLATION_MS = 80;
 let mobileGameOverUiIntervalId: number | null = null;
 let mobileGameplayControlsVisible = false;
 let mobileGameOverActionsVisible = false;
@@ -362,6 +392,13 @@ function stopMobileUiWatcher(): void {
 
 mobileRestartBtn?.addEventListener('click', () => {
     if (!game || game.getGameState() !== GameState.GAME_OVER) {
+        return;
+    }
+
+    if (activeRuntimeRole !== 'local') {
+        multiplayerStatus = 'Round over. Back in lobby for rematch.';
+        returnToMainMenu();
+        showMultiplayerMenu();
         return;
     }
 
@@ -476,10 +513,11 @@ function areInputStatesEqual(first: InputState, second: InputState): boolean {
         && first.deployBomb === second.deployBomb;
 }
 
-function recordLocalInputFrame(sequence: number, inputState: InputState): void {
+function recordLocalInputFrame(sequence: number, inputState: InputState, dt?: number): void {
     multiplayerLocalInputHistory.push({
         sequence,
         input: cloneInputState(inputState),
+        dt,
     });
 
     const overflow = multiplayerLocalInputHistory.length - MULTIPLAYER_MAX_INPUT_HISTORY;
@@ -508,7 +546,7 @@ function discardAcknowledgedLocalInputFrames(ackSequence: number): void {
     }
 }
 
-function dispatchLocalInputImmediately(inputState: InputState): void {
+function dispatchLocalInputImmediately(inputState: InputState, dt?: number): void {
     if (!networkClient.getIsConnected() || multiplayerLocalPlayerIndex === null || !multiplayerSelfPlayerId) {
         return;
     }
@@ -522,43 +560,358 @@ function dispatchLocalInputImmediately(inputState: InputState): void {
         return;
     }
 
-    if (multiplayerLastDispatchedInputState && areInputStatesEqual(multiplayerLastDispatchedInputState, inputState)) {
-        return;
-    }
-
-    const currentSequence = multiplayerInputSequence;
+    const currentSequence = multiplayerInputSequence++;
     const inputSnapshot = cloneInputState(inputState);
-    const sent = networkClient.sendInputFrame(currentSequence, inputSnapshot);
-
-    if (!sent) {
-        return;
-    }
-
-    if (!multiplayerIsHost) {
-        recordLocalInputFrame(currentSequence, inputSnapshot);
-    }
-
-    multiplayerInputSequence = currentSequence + 1;
+    recordLocalInputFrame(currentSequence, inputSnapshot, dt);
+    networkClient.sendInputFrame(currentSequence, inputSnapshot);
     multiplayerLastDispatchedInputState = inputSnapshot;
 }
 
-function stopMultiplayerInputSync(): void {
-    if (multiplayerSnapshotSyncIntervalId !== null) {
-        window.clearInterval(multiplayerSnapshotSyncIntervalId);
-        multiplayerSnapshotSyncIntervalId = null;
+function resetMultiplayerTickState(): void {
+    multiplayerTickHistory.length = 0;
+    multiplayerLastReceivedTick = -1;
+    multiplayerServerTimeOffsetMs = 0;
+    multiplayerHasServerClockSync = false;
+}
+
+function updateServerClockOffset(serverTimeMs: number): void {
+    const observedOffsetMs = serverTimeMs - Date.now();
+
+    if (!multiplayerHasServerClockSync) {
+        multiplayerServerTimeOffsetMs = observedOffsetMs;
+        multiplayerHasServerClockSync = true;
+        return;
     }
 
-    multiplayerRemoteInputByPlayerId.clear();
-    multiplayerLastRemoteInputSequenceByPlayerId.clear();
+    const smoothing = 0.12;
+    multiplayerServerTimeOffsetMs += (observedOffsetMs - multiplayerServerTimeOffsetMs) * smoothing;
+}
+
+function rememberTickUpdate(message: TickUpdateMessage): void {
+    const frame: TickHistoryFrame = {
+        tick: message.tick,
+        serverTimeMs: message.serverTimeMs,
+        players: message.players,
+        playersById: new Map(message.players.map(player => [player.playerId, player])),
+        obstacles: message.obstacles,
+        powerups: message.powerups,
+        projectiles: message.projectiles,
+        bombs: message.bombs,
+        events: message.events,
+    };
+
+    multiplayerTickHistory.push(frame);
+
+    const overflow = multiplayerTickHistory.length - MULTIPLAYER_MAX_TICK_HISTORY;
+    if (overflow > 0) {
+        multiplayerTickHistory.splice(0, overflow);
+    }
+}
+
+function createFallbackTickPlayer(playerId: string, playerIndex: number): TickPlayerState {
+    const spawnPosition = createSpawnPosition(
+        playerIndex,
+        Math.max(2, multiplayerMatchPlayerOrder.length),
+        SERVER_WORLD_WIDTH,
+        SERVER_WORLD_HEIGHT,
+        PLAYER_SIZE
+    );
+
+    return {
+        playerId,
+        x: spawnPosition.x,
+        y: spawnPosition.y,
+        alive: true,
+        score: 0,
+        lastProcessedSeq: -1,
+        health: 100,
+        isShielded: false,
+        storedBombs: 0,
+    };
+}
+
+function syncMultiplayerRenderFrame(): void {
+    if (!game || multiplayerMatchPlayerOrder.length === 0 || multiplayerTickHistory.length === 0) {
+        return;
+    }
+
+    const renderServerTimeMs = Date.now() + multiplayerServerTimeOffsetMs - MULTIPLAYER_INTERPOLATION_DELAY_MS;
+
+    let frameA = multiplayerTickHistory[0];
+    let frameB: TickHistoryFrame | null = null;
+
+    for (let i = 0; i < multiplayerTickHistory.length; i++) {
+        const frame = multiplayerTickHistory[i];
+        if (frame.serverTimeMs <= renderServerTimeMs) {
+            frameA = frame;
+            frameB = multiplayerTickHistory[i + 1] ?? null;
+        } else {
+            if (!frameB) {
+                frameB = frame;
+            }
+            break;
+        }
+    }
+
+    let alpha = 0;
+    if (frameB) {
+        const durationMs = Math.max(1, frameB.serverTimeMs - frameA.serverTimeMs);
+        alpha = Math.max(0, Math.min(1, (renderServerTimeMs - frameA.serverTimeMs) / durationMs));
+    } else {
+        alpha = 1;
+    }
+
+    const snapshotPlayers = multiplayerMatchPlayerOrder.map((playerId, playerIndex) => {
+        const pA = frameA.playersById.get(playerId) ?? createFallbackTickPlayer(playerId, playerIndex);
+        const pB = frameB ? (frameB.playersById.get(playerId) ?? pA) : pA;
+
+        if (playerId === multiplayerSelfPlayerId) {
+            const localPlayer = game?.getLocalPlayer();
+            return {
+                playerId,
+                position: { x: localPlayer ? localPlayer.position.x : pB.x, y: localPlayer ? localPlayer.position.y : pB.y },
+                velocity: { x: localPlayer ? localPlayer.velocity.x : 0, y: localPlayer ? localPlayer.velocity.y : 0 },
+                health: pB.health,
+                isAlive: pB.alive,
+                isShielded: pB.isShielded,
+                storedBombs: pB.storedBombs,
+            };
+        }
+
+        const interpolatedX = lerp(pA.x, pB.x, alpha);
+        const interpolatedY = lerp(pA.y, pB.y, alpha);
+        const dt = Math.max(0.001, (frameB ? frameB.serverTimeMs - frameA.serverTimeMs : 16.6) / 1000);
+        const vx = (pB.x - pA.x) / dt;
+        const vy = (pB.y - pA.y) / dt;
+
+        return {
+            playerId,
+            position: { x: interpolatedX, y: interpolatedY },
+            velocity: { x: vx, y: vy },
+            health: pB.alive ? pB.health : 0,
+            isAlive: pB.alive,
+            isShielded: pB.isShielded,
+            storedBombs: pB.storedBombs,
+        };
+    });
+
+    const obstaclesA = frameA.obstacles;
+    const obstaclesB = frameB ? frameB.obstacles : obstaclesA;
+    const obstaclesByIdB = new Map(obstaclesB.map(o => [o.id, o]));
+
+    const interpolatedObstacles = obstaclesA.map(oA => {
+        const oB = obstaclesByIdB.get(oA.id);
+        if (!oB) {
+            return {
+                enemyId: oA.id,
+                position: { x: oA.x, y: oA.y + oA.vy * (alpha * SERVER_FIXED_DELTA_SECONDS) },
+                velocity: { x: 0, y: oA.vy },
+                width: oA.w,
+                height: oA.h,
+                color: oA.color,
+            };
+        }
+
+        return {
+            enemyId: oA.id,
+            position: { x: lerp(oA.x, oB.x, alpha), y: lerp(oA.y, oB.y, alpha) },
+            velocity: { x: 0, y: lerp(oA.vy, oB.vy, alpha) },
+            width: oB.w,
+            height: oB.h,
+            color: oB.color,
+        };
+    });
+
+    const projectilesA = frameA.projectiles;
+    const projectilesB = frameB ? frameB.projectiles : projectilesA;
+    const projectilesByIdB = new Map(projectilesB.map(p => [p.id, p]));
+
+    const interpolatedProjectiles = projectilesA.map(pA => {
+        const pB = projectilesByIdB.get(pA.id);
+        if (!pB) {
+            return {
+                projectileId: pA.id,
+                position: { x: pA.x + pA.vx * (alpha * SERVER_FIXED_DELTA_SECONDS), y: pA.y + pA.vy * (alpha * SERVER_FIXED_DELTA_SECONDS) },
+                velocity: { x: pA.vx, y: pA.vy },
+                shooterPlayerId: pA.shooterPlayerId,
+                targetPlayerId: pA.targetPlayerId,
+                expiresInSeconds: pA.expiresInSeconds,
+            };
+        }
+
+        return {
+            projectileId: pA.id,
+            position: { x: lerp(pA.x, pB.x, alpha), y: lerp(pA.y, pB.y, alpha) },
+            velocity: { x: lerp(pA.vx, pB.vx, alpha), y: lerp(pA.vy, pB.vy, alpha) },
+            shooterPlayerId: pB.shooterPlayerId,
+            targetPlayerId: pB.targetPlayerId,
+            expiresInSeconds: pB.expiresInSeconds,
+        };
+    });
+
+    const bombsA = frameA.bombs;
+    const bombsB = frameB ? frameB.bombs : bombsA;
+    const bombsByIdB = new Map(bombsB.map(b => [b.id, b]));
+
+    const interpolatedBombs = bombsA.map(bA => {
+        const bB = bombsByIdB.get(bA.id);
+        if (!bB) {
+            return {
+                bombId: bA.id,
+                ownerPlayerId: bA.ownerPlayerId,
+                position: { x: bA.x, y: bA.y },
+                isExploding: bA.isExploding,
+                elapsedSeconds: bA.elapsedSeconds,
+            };
+        }
+
+        return {
+            bombId: bA.id,
+            ownerPlayerId: bB.ownerPlayerId,
+            position: { x: lerp(bA.x, bB.x, alpha), y: lerp(bA.y, bB.y, alpha) },
+            isExploding: bB.isExploding,
+            elapsedSeconds: lerp(bA.elapsedSeconds, bB.elapsedSeconds, alpha),
+        };
+    });
+
+    const latestFrame = frameB ?? frameA;
+
+    const snapshot: GameSnapshot = {
+        timestampMs: Date.now(),
+        gameTimeSeconds: latestFrame.tick / SERVER_TICK_RATE,
+        roundState: latestFrame.events.some(event => event.type === 'match_ended') ? 'game_over' : 'playing',
+        score: latestFrame.players.reduce((maxScore, player) => Math.max(maxScore, player.score), 0),
+        worldWidth: SERVER_WORLD_WIDTH,
+        worldHeight: SERVER_WORLD_HEIGHT,
+        players: snapshotPlayers,
+        enemies: interpolatedObstacles,
+        projectiles: interpolatedProjectiles,
+        bombs: interpolatedBombs,
+        powerups: latestFrame.powerups.map(powerup => ({
+            powerupId: powerup.id,
+            position: { x: powerup.x, y: powerup.y },
+            type: powerup.type,
+            collected: powerup.collected,
+        })),
+    };
+
+    game.applySnapshot(snapshot, multiplayerMatchPlayerOrder, multiplayerSelfPlayerId);
+}
+
+function applyTickUpdate(message: TickUpdateMessage): void {
+    if (!game || message.tick <= multiplayerLastReceivedTick) {
+        return;
+    }
+
+    multiplayerLastReceivedTick = message.tick;
+
+    updateServerClockOffset(message.serverTimeMs);
+    rememberTickUpdate(message);
+
+    const latestFrame = multiplayerTickHistory[multiplayerTickHistory.length - 1];
+    if (latestFrame && multiplayerSelfPlayerId) {
+        const selfState = latestFrame.playersById.get(multiplayerSelfPlayerId);
+        if (selfState && Number.isFinite(selfState.lastProcessedSeq)) {
+            const ackSeq = selfState.lastProcessedSeq;
+            discardAcknowledgedLocalInputFrames(ackSeq);
+
+            const snapshot: GameSnapshot = {
+                timestampMs: message.serverTimeMs,
+                gameTimeSeconds: message.tick / SERVER_TICK_RATE,
+                roundState: message.events.some(e => e.type === 'match_ended') ? 'game_over' : 'playing',
+                score: message.players.reduce((max, p) => Math.max(max, p.score), 0),
+                worldWidth: SERVER_WORLD_WIDTH,
+                worldHeight: SERVER_WORLD_HEIGHT,
+                players: message.players.map(p => ({
+                    playerId: p.playerId,
+                    position: { x: p.x, y: p.y },
+                    velocity: { x: 0, y: 0 },
+                    health: p.health,
+                    isAlive: p.alive,
+                    isShielded: p.isShielded,
+                    storedBombs: p.storedBombs,
+                })),
+                enemies: message.obstacles.map(o => ({
+                    enemyId: o.id,
+                    position: { x: o.x, y: o.y },
+                    velocity: { x: 0, y: o.vy },
+                    width: o.w,
+                    height: o.h,
+                    color: o.color,
+                })),
+                projectiles: message.projectiles.map(p => ({
+                    projectileId: p.id,
+                    position: { x: p.x, y: p.y },
+                    velocity: { x: p.vx, y: p.vy },
+                    shooterPlayerId: p.shooterPlayerId,
+                    targetPlayerId: p.targetPlayerId,
+                    expiresInSeconds: p.expiresInSeconds,
+                })),
+                bombs: message.bombs.map(b => ({
+                    bombId: b.id,
+                    ownerPlayerId: b.ownerPlayerId,
+                    position: { x: b.x, y: b.y },
+                    isExploding: b.isExploding,
+                    elapsedSeconds: b.elapsedSeconds,
+                })),
+                powerups: message.powerups.map(p => ({
+                    powerupId: p.id,
+                    position: { x: p.x, y: p.y },
+                    type: p.type,
+                    collected: p.collected,
+                })),
+            };
+
+            game.applySnapshot(snapshot, multiplayerMatchPlayerOrder, multiplayerSelfPlayerId, {
+                localInputAckSequence: ackSeq,
+                localInputHistory: multiplayerLocalInputHistory,
+                localReplayDeltaSeconds: SERVER_FIXED_DELTA_SECONDS,
+            });
+        }
+    }
+
+    message.events.forEach(event => {
+        if (event.type === 'player_died') {
+            if (event.playerId === multiplayerSelfPlayerId) {
+                multiplayerStatus = 'You were eliminated.';
+            } else {
+                multiplayerStatus = `Player ${event.playerId.slice(0, 6)} was eliminated.`;
+            }
+            return;
+        }
+
+        if (event.type === 'match_ended') {
+            multiplayerMatchStartPending = false;
+
+            if (event.winnerPlayerId) {
+                const winnerLabel = event.winnerPlayerId === multiplayerSelfPlayerId
+                    ? 'You'
+                    : `Player ${event.winnerPlayerId.slice(0, 6)}`;
+                multiplayerStatus = `${winnerLabel} won the round.`;
+            } else {
+                multiplayerStatus = 'Round ended in a draw.';
+            }
+
+            if (activeRuntimeRole !== 'local') {
+                returnToMainMenu();
+                showMultiplayerMenu();
+            }
+        }
+    });
+
+    if (game) {
+        applyResponsiveCanvasLayout();
+    }
+}
+
+function stopMultiplayerInputSync(): void {
     multiplayerMatchPlayerOrder = [];
     multiplayerLocalPlayerIndex = null;
     multiplayerInputSequence = 0;
     multiplayerLastDispatchedInputState = null;
     multiplayerLocalInputHistory.length = 0;
     multiplayerLastAcknowledgedLocalInputSequence = -1;
-    multiplayerSnapshotTick = 0;
-    multiplayerLastAppliedSnapshotTick = -1;
-    multiplayerIsHost = false;
+    resetMultiplayerTickState();
     multiplayerMatchStartPending = false;
 
     mobileControls?.reset();
@@ -566,57 +919,28 @@ function stopMultiplayerInputSync(): void {
     if (game) {
         game.setNetworkSyncContext({ role: 'local' });
         game.setPlayerInputResolver(undefined);
+        game.setRenderSyncCallback(undefined);
     }
 }
 
-function startMatchTransportLoops(): void {
-    if (multiplayerSnapshotSyncIntervalId !== null) {
-        window.clearInterval(multiplayerSnapshotSyncIntervalId);
-        multiplayerSnapshotSyncIntervalId = null;
-    }
-
-    multiplayerLastDispatchedInputState = null;
-
-    if (!game) {
-        return;
-    }
-
-    if (multiplayerIsHost) {
-        multiplayerSnapshotSyncIntervalId = window.setInterval(() => {
-            if (!game) {
-                return;
-            }
-
-            const snapshot = game.serializeSnapshot(
-                multiplayerMatchPlayerOrder,
-                multiplayerLastRemoteInputSequenceByPlayerId
-            );
-            const sent = networkClient.sendSnapshot(multiplayerSnapshotTick, snapshot);
-            if (sent) {
-                multiplayerSnapshotTick++;
-            }
-        }, MULTIPLAYER_SNAPSHOT_SEND_INTERVAL_MS);
-    }
-}
-
-function refreshHostRoleForActiveMatch(): void {
+function refreshMatchContextForActiveRoom(): void {
     if (!multiplayerRoom || !multiplayerSelfPlayerId) {
         return;
     }
 
-    multiplayerIsHost = multiplayerRoom.hostPlayerId === multiplayerSelfPlayerId;
+    const playerOrder = multiplayerRoom.players.map(player => player.playerId);
+    multiplayerMatchPlayerOrder = playerOrder;
+    multiplayerLocalPlayerIndex = playerOrder.findIndex(playerId => playerId === multiplayerSelfPlayerId);
 
-    if (!game || multiplayerMatchPlayerOrder.length === 0) {
+    if (!game || multiplayerMatchPlayerOrder.length === 0 || multiplayerLocalPlayerIndex < 0) {
         return;
     }
 
     game.setNetworkSyncContext({
-        role: multiplayerIsHost ? 'host' : 'client',
+        role: 'client',
         playerOrder: multiplayerMatchPlayerOrder,
         localPlayerId: multiplayerSelfPlayerId,
     });
-
-    startMatchTransportLoops();
 }
 
 function startMultiplayerMatchFromRoom(roomOverride?: RoomSummary): boolean {
@@ -653,9 +977,7 @@ function startMultiplayerMatchFromRoom(roomOverride?: RoomSummary): boolean {
     multiplayerLastDispatchedInputState = null;
     multiplayerLocalInputHistory.length = 0;
     multiplayerLastAcknowledgedLocalInputSequence = -1;
-    multiplayerSnapshotTick = 0;
-    multiplayerLastAppliedSnapshotTick = -1;
-    multiplayerIsHost = activeRoom.hostPlayerId === multiplayerSelfPlayerId;
+    resetMultiplayerTickState();
 
     if (game) {
         returnToMainMenu();
@@ -668,7 +990,7 @@ function startMultiplayerMatchFromRoom(roomOverride?: RoomSummary): boolean {
             hat: player.customization.hat,
             label: player.displayName,
         })),
-        multiplayerRole: multiplayerIsHost ? 'host' : 'client',
+        multiplayerRole: 'client',
     });
     if (!game) {
         multiplayerStatus = 'Failed to initialize game instance for multiplayer input sync.';
@@ -677,29 +999,27 @@ function startMultiplayerMatchFromRoom(roomOverride?: RoomSummary): boolean {
     }
 
     game.setNetworkSyncContext({
-        role: multiplayerIsHost ? 'host' : 'client',
+        role: 'client',
         playerOrder: multiplayerMatchPlayerOrder,
         localPlayerId: multiplayerSelfPlayerId,
     });
 
-    game.setPlayerInputResolver((_player, playerIndex) => {
+    game.setRenderSyncCallback(syncMultiplayerRenderFrame);
+
+    game.setPlayerInputResolver((_player, playerIndex, deltaTime) => {
         const mappedPlayerId = multiplayerMatchPlayerOrder[playerIndex];
         if (!mappedPlayerId) {
             return undefined;
         }
 
         if (mappedPlayerId === multiplayerSelfPlayerId) {
-            return getLocalControlInputState();
+            return getLocalControlInputState(deltaTime);
         }
 
-        return multiplayerRemoteInputByPlayerId.get(mappedPlayerId);
+        return undefined;
     });
 
-    startMatchTransportLoops();
-
-    multiplayerStatus = multiplayerIsHost
-        ? 'You are host: authoritative simulation with input relay active.'
-        : `Client prediction active in slot ${multiplayerLocalPlayerIndex + 1}.`;
+    multiplayerStatus = `Server-authoritative sync active (slot ${multiplayerLocalPlayerIndex + 1}).`;
 
     multiplayerMatchStartPending = false;
     return true;
@@ -725,38 +1045,33 @@ function handleMultiplayerMessage(message: ServerToClientMessage): void {
             multiplayerSelfPlayerId = message.playerId;
             multiplayerRoom = message.room;
             stopMultiplayerInputSync();
-            multiplayerLastAppliedSnapshotTick = -1;
             multiplayerMatchStartPending = false;
             multiplayerStatus = `Joined room ${message.room.code}.`;
             break;
         case 'room_updated':
             multiplayerRoom = message.room;
-            refreshHostRoleForActiveMatch();
+            refreshMatchContextForActiveRoom();
 
             if (multiplayerMatchStartPending && message.room.started) {
                 startMultiplayerMatchFromRoom(message.room);
             }
             break;
         case 'player_left':
-            multiplayerRemoteInputByPlayerId.delete(message.playerId);
-            multiplayerLastRemoteInputSequenceByPlayerId.delete(message.playerId);
             multiplayerStatus = `Player ${message.playerId.slice(0, 6)} left the room.`;
             break;
         case 'host_changed':
             multiplayerStatus = `Host migrated to ${message.hostPlayerId.slice(0, 6)}.`;
-            multiplayerLastAppliedSnapshotTick = -1;
             if (multiplayerRoom) {
                 multiplayerRoom = {
                     ...multiplayerRoom,
                     hostPlayerId: message.hostPlayerId,
                 };
             }
-            refreshHostRoleForActiveMatch();
+            refreshMatchContextForActiveRoom();
             break;
         case 'match_started':
-            multiplayerStatus = `Match started for room ${message.roomCode}. Input sync engaged.`;
+            multiplayerStatus = `Match started for room ${message.roomCode}. Awaiting server ticks...`;
             multiplayerRoom = message.room;
-            multiplayerLastAppliedSnapshotTick = -1;
             multiplayerMatchStartPending = true;
             startMultiplayerMatchFromRoom(message.room);
             break;
@@ -765,50 +1080,8 @@ function handleMultiplayerMessage(message: ServerToClientMessage): void {
             break;
         case 'pong':
             break;
-        case 'input_frame':
-            if (message.fromPlayerId !== multiplayerSelfPlayerId) {
-                const lastSequence = multiplayerLastRemoteInputSequenceByPlayerId.get(message.fromPlayerId);
-                if (typeof lastSequence === 'number' && message.sequence <= lastSequence) {
-                    break;
-                }
-
-                multiplayerLastRemoteInputSequenceByPlayerId.set(message.fromPlayerId, message.sequence);
-                multiplayerRemoteInputByPlayerId.set(message.fromPlayerId, cloneInputState(message.input));
-            }
-            break;
-        case 'state_snapshot':
-            if (!multiplayerIsHost && game && multiplayerRoom && message.fromPlayerId === multiplayerRoom.hostPlayerId) {
-                if (message.tick <= multiplayerLastAppliedSnapshotTick) {
-                    break;
-                }
-
-                multiplayerLastAppliedSnapshotTick = message.tick;
-
-                const localSnapshot = multiplayerSelfPlayerId
-                    ? message.snapshot.players.find(player => player.playerId === multiplayerSelfPlayerId)
-                    : undefined;
-
-                if (typeof localSnapshot?.lastProcessedInputSequence === 'number') {
-                    discardAcknowledgedLocalInputFrames(localSnapshot.lastProcessedInputSequence);
-
-                    game.applySnapshot(
-                        message.snapshot,
-                        multiplayerMatchPlayerOrder,
-                        multiplayerSelfPlayerId,
-                        {
-                            localInputAckSequence: multiplayerLastAcknowledgedLocalInputSequence,
-                            localInputHistory: multiplayerLocalInputHistory,
-                            localReplayDeltaSeconds: MULTIPLAYER_REPLAY_FRAME_SECONDS,
-                        }
-                    );
-                } else {
-                    game.applySnapshot(message.snapshot, multiplayerMatchPlayerOrder, multiplayerSelfPlayerId);
-                }
-
-                applyResponsiveCanvasLayout();
-            }
-            break;
-        case 'game_event':
+        case 'tick_update':
+            applyTickUpdate(message);
             break;
     }
 
@@ -883,7 +1156,7 @@ function showMultiplayerMenu(): void {
     menuOverlay.innerHTML = `
         <div class="menu-panel multiplayer-panel">
             <h2 class="menu-title">Online Lobby</h2>
-            <p class="menu-subtitle">Client-hosted multiplayer (WASD + Left Shift + Q)</p>
+            <p class="menu-subtitle">Server-authoritative multiplayer (WASD + Left Shift + Q)</p>
 
             <div class="multiplayer-status ${multiplayerConnected ? 'connected' : 'disconnected'}">${multiplayerStatus}</div>
 
@@ -1367,7 +1640,7 @@ window.addEventListener('orientationchange', handleViewportResize);
 
 showStartMenu();
 
-function getLocalControlInputState(): InputState {
+function getLocalControlInputState(dt?: number): InputState {
     const keyboardState = multiplayerLocalInputHandler.getState();
     const mobileState = mobileControls?.getState();
 
@@ -1382,7 +1655,7 @@ function getLocalControlInputState(): InputState {
             deployBomb: keyboardState.deployBomb || mobileState.deployBomb,
         };
 
-    dispatchLocalInputImmediately(resolvedInput);
+    dispatchLocalInputImmediately(resolvedInput, dt);
 
     return resolvedInput;
 }

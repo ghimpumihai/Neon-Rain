@@ -26,13 +26,14 @@ import {
     MAP_BORDER_THICKNESS,
 } from '../constants/gameplay';
 
-type PlayerInputResolver = (player: Player, index: number) => InputState | undefined;
+type PlayerInputResolver = (player: Player, index: number, deltaTime?: number) => InputState | undefined;
 type NetworkRole = 'local' | 'host' | 'client';
 type ProcessedInputSequenceLookup = Map<string, number> | Record<string, number>;
 
 interface InputHistoryFrame {
     sequence: number;
     input: InputState;
+    dt?: number;
 }
 
 interface SnapshotApplyOptions {
@@ -66,6 +67,7 @@ export class Game {
     // Note: inputs field is defined but not directly used - players have their own InputHandler references
     private players: Player[] = [];
     private playerInputResolver?: PlayerInputResolver;
+    private renderSyncCallback?: () => void;
     private networkRole: NetworkRole = 'local';
     private networkPlayerOrder: string[] = [];
     private networkLocalPlayerId: string | null = null;
@@ -291,6 +293,10 @@ export class Game {
      * Handle global input (for restart, etc.)
      */
     private handleGlobalInput(event: KeyboardEvent): void {
+        if (this.networkRole !== 'local') {
+            return;
+        }
+
         if (this.gameState === GameState.GAME_OVER) {
             if (event.code === 'Space' || event.code === 'Enter') {
                 this.restart();
@@ -572,6 +578,7 @@ export class Game {
 
     private updateClientReplica(deltaTime: number): void {
         this.gameTime += deltaTime;
+        this.renderSyncCallback?.();
 
         const localPlayerIndex = this.getLocalPlayerIndex();
         this.players.forEach((player, index) => {
@@ -579,7 +586,7 @@ export class Game {
                 return;
             }
 
-            const resolvedInput = this.playerInputResolver?.(player, index);
+            const resolvedInput = this.playerInputResolver?.(player, index, deltaTime);
             const isLocalPlayer = localPlayerIndex !== null && index === localPlayerIndex;
 
             if (isLocalPlayer) {
@@ -591,8 +598,6 @@ export class Game {
                 player.update(deltaTime, resolvedInput);
                 return;
             }
-
-            player.advanceFromNetworkVelocity(deltaTime);
         });
 
         this.updatePlayerTrails(deltaTime);
@@ -1096,6 +1101,12 @@ export class Game {
     public getIsRunning(): boolean { return this.isRunning; }
     public getGameTime(): number { return this.gameTime; }
     public getGameState(): GameState { return this.gameState; }
+    public getPlayers(): Player[] { return this.players; }
+    public getLocalPlayer(): Player | null {
+        const index = this.getLocalPlayerIndex();
+        if (index === null) return null;
+        return this.players[index] ?? null;
+    }
 
     public setNetworkSyncContext(options?: {
         role?: NetworkRole;
@@ -1119,6 +1130,10 @@ export class Game {
 
     public setPlayerInputResolver(resolver?: PlayerInputResolver): void {
         this.playerInputResolver = resolver;
+    }
+
+    public setRenderSyncCallback(callback?: () => void): void {
+        this.renderSyncCallback = callback;
     }
 
     public getPlayerInputState(playerIndex: number): InputState | null {
@@ -1243,31 +1258,69 @@ export class Game {
             }
 
             const isLocalPlayer = mappedPlayerId === resolvedLocalPlayerId;
-            const shouldReconcileLocalPlayer =
-                this.networkRole === 'client'
-                && isLocalPlayer
-                && typeof localInputAckSequence === 'number';
 
-            player.applyNetworkSnapshot(playerSnapshot, {
-                interpolatePosition: this.networkRole === 'client' && !shouldReconcileLocalPlayer,
-                smoothingAlpha: isLocalPlayer ? 0.18 : 0.32,
-                jitterDeadZone: isLocalPlayer ? 1.4 : 0.9,
-                snapDistanceThreshold: isLocalPlayer ? 180 : 260,
-                preserveVelocity: this.networkRole === 'client' && isLocalPlayer && !shouldReconcileLocalPlayer,
-            });
+            if (this.networkRole === 'client') {
+                if (isLocalPlayer) {
+                    if (hasLocalInputAck && this.gameState === GameState.PLAYING && localInputHistory.length > 0) {
+                        let simX = playerSnapshot.position.x;
+                        let simY = playerSnapshot.position.y;
+                        const simSpeed = player.getConfig().speed;
+                        const dashMult = player.getConfig().dashMultiplier;
+                        const width = this.config.canvasWidth;
+                        const height = this.config.canvasHeight;
+                        const size = player.width;
 
-            if (
-                shouldReconcileLocalPlayer
-                && this.gameState === GameState.PLAYING
-                && localInputHistory.length > 0
-            ) {
-                for (const inputFrame of localInputHistory) {
-                    if (inputFrame.sequence <= localInputAckSequence) {
-                        continue;
+                        for (const inputFrame of localInputHistory) {
+                            if (inputFrame.sequence <= (localInputAckSequence as number)) {
+                                continue;
+                            }
+                            const axisX = (inputFrame.input.right ? 1 : 0) - (inputFrame.input.left ? 1 : 0);
+                            const axisY = (inputFrame.input.down ? 1 : 0) - (inputFrame.input.up ? 1 : 0);
+                            const spd = simSpeed * (inputFrame.input.dash ? dashMult : 1);
+                            const dt = inputFrame.dt ?? replayDeltaSeconds;
+                            simX += axisX * spd * dt;
+                            simY += axisY * spd * dt;
+                            simX = Math.min(width - size, Math.max(0, simX));
+                            simY = Math.min(height - size, Math.max(0, simY));
+                        }
+
+                        const errX = simX - player.position.x;
+                        const errY = simY - player.position.y;
+                        const errDist = Math.hypot(errX, errY);
+
+                        if (errDist > 50) {
+                            player.position.x = simX;
+                            player.position.y = simY;
+                        } else if (errDist > 1.5) {
+                            player.position.x += errX * 0.25;
+                            player.position.y += errY * 0.25;
+                        }
                     }
 
-                    player.update(replayDeltaSeconds, inputFrame.input);
+                    player.setInterpolatedState({
+                        x: player.position.x,
+                        y: player.position.y,
+                        health: playerSnapshot.health,
+                        isAlive: playerSnapshot.isAlive,
+                        isShielded: playerSnapshot.isShielded,
+                        storedBombs: playerSnapshot.storedBombs,
+                    });
+                } else {
+                    player.setInterpolatedState({
+                        x: playerSnapshot.position.x,
+                        y: playerSnapshot.position.y,
+                        vx: playerSnapshot.velocity.x,
+                        vy: playerSnapshot.velocity.y,
+                        health: playerSnapshot.health,
+                        isAlive: playerSnapshot.isAlive,
+                        isShielded: playerSnapshot.isShielded,
+                        storedBombs: playerSnapshot.storedBombs,
+                    });
                 }
+            } else {
+                player.applyNetworkSnapshot(playerSnapshot, {
+                    interpolatePosition: false,
+                });
             }
         });
 
@@ -1297,23 +1350,34 @@ export class Game {
     }
 
     private applyProjectileSnapshots(projectileSnapshots: ProjectileSnapshot[], playerOrder: string[]): void {
-        this.projectilePool.clear();
+        const activeProjs = this.projectilePool.getActiveObjects();
 
-        projectileSnapshots.forEach(projectileSnapshot => {
-            const shooter = this.resolvePlayerById(projectileSnapshot.shooterPlayerId, playerOrder) ?? this.players[0];
-            const target = this.resolvePlayerById(projectileSnapshot.targetPlayerId, playerOrder) ?? this.players[1] ?? this.players[0];
+        while (activeProjs.length > projectileSnapshots.length) {
+            const p = activeProjs.pop();
+            if (p) this.projectilePool.release(p);
+        }
 
-            const projectile = this.projectilePool.get();
+        while (activeProjs.length < projectileSnapshots.length) {
+            this.projectilePool.get();
+        }
+
+        const currentActive = this.projectilePool.getActiveObjects();
+        projectileSnapshots.forEach((snapshot, index) => {
+            const shooter = this.resolvePlayerById(snapshot.shooterPlayerId, playerOrder) ?? this.players[0];
+            const target = this.resolvePlayerById(snapshot.targetPlayerId, playerOrder) ?? this.players[1] ?? this.players[0];
+            const projectile = currentActive[index];
+            if (!projectile) return;
+
             projectile.initialize(
-                projectileSnapshot.position.x,
-                projectileSnapshot.position.y,
+                snapshot.position.x,
+                snapshot.position.y,
                 shooter,
                 target
             );
             projectile.applySnapshotState(
-                projectileSnapshot.position,
-                projectileSnapshot.velocity,
-                projectileSnapshot.expiresInSeconds
+                snapshot.position,
+                snapshot.velocity,
+                snapshot.expiresInSeconds
             );
         });
     }
