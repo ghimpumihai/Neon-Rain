@@ -215,16 +215,6 @@ export class NetworkClient {
         return configured && configured.length > 0 ? configured : undefined;
     }
 
-    private formatHostNameForUrl(hostName: string): string {
-        const normalizedHostName = hostName.trim();
-
-        // IPv6 hosts need square brackets when used with explicit ports.
-        if (normalizedHostName.includes(':')) {
-            return `[${normalizedHostName}]`;
-        }
-
-        return normalizedHostName;
-    }
 
     private emitConnectionStatus(connected: boolean): void {
         this.connectionListeners.forEach(listener => listener(connected));

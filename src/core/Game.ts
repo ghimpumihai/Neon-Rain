@@ -1356,8 +1356,9 @@ export class Game {
     private applyProjectileSnapshots(projectileSnapshots: ProjectileSnapshot[], playerOrder: string[]): void {
         const activeProjs = this.projectilePool.getActiveObjects();
 
-        while (activeProjs.length > projectileSnapshots.length) {
-            const p = activeProjs.pop();
+        const extraCount = activeProjs.length - projectileSnapshots.length;
+        for (let i = 0; i < extraCount; i++) {
+            const p = activeProjs[activeProjs.length - 1 - i];
             if (p) this.projectilePool.release(p);
         }
 

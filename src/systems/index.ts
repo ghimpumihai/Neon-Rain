@@ -1,14 +1,18 @@
 // Systems exports
 export {
     InputHandler,
-    InputState,
-    KeyBindings,
     PLAYER_1_KEYS,
     PLAYER_2_KEYS,
     DEFAULT_KEYS
 } from './InputHandler';
-export { EnemyManager, EnemyManagerConfig } from './EnemyManager';
-export { Particle, ParticleSystem, ParticleConfig } from './Particles';
+export type {
+    InputState,
+    KeyBindings,
+} from './InputHandler';
+export { EnemyManager } from './EnemyManager';
+export type { EnemyManagerConfig } from './EnemyManager';
+export { Particle, ParticleSystem } from './Particles';
+export type { ParticleConfig } from './Particles';
 export { PowerupManager } from './PowerupManager';
 export {
     checkAABBCollision,

@@ -19,13 +19,12 @@ import {
 } from './multiplayer/protocol';
 import {
     PLAYER_SIZE,
+    SERVER_FIXED_DELTA_SECONDS,
     SERVER_TICK_RATE,
     SERVER_WORLD_HEIGHT,
     SERVER_WORLD_WIDTH,
-    advancePlayerWithVelocity,
     createSpawnPosition,
     lerp,
-    type SimPlayerState,
 } from './game/physics';
 import {
     CUBE_HATS,
@@ -278,7 +277,6 @@ let multiplayerMatchPlayerOrder: string[] = [];
 let multiplayerLocalPlayerIndex: number | null = null;
 let multiplayerInputSequence = 0;
 let multiplayerLastAcknowledgedLocalInputSequence = -1;
-let multiplayerLastDispatchedInputState: InputState | null = null;
 let multiplayerLastReceivedTick = -1;
 let multiplayerServerTimeOffsetMs = 0;
 let multiplayerHasServerClockSync = false;
@@ -298,10 +296,9 @@ const canvas = canvasElement;
 const mobileControls = isMobileDevice() ? new MobileControls() : null;
 const CANVAS_VIEWPORT_PADDING_PX = 12;
 const MOBILE_GAMEPLAY_CONTROLS_RESERVE_HEIGHT_PX = 130;
-const MULTIPLAYER_REPLAY_FRAME_SECONDS = 1 / 60;
 const MULTIPLAYER_MAX_INPUT_HISTORY = 300;
+const MULTIPLAYER_MAX_TICK_HISTORY = 120;
 const MULTIPLAYER_INTERPOLATION_DELAY_MS = 45;
-const MULTIPLAYER_MAX_EXTRAPOLATION_MS = 80;
 let mobileGameOverUiIntervalId: number | null = null;
 let mobileGameplayControlsVisible = false;
 let mobileGameOverActionsVisible = false;
@@ -508,15 +505,6 @@ function cloneInputState(inputState: InputState): InputState {
     };
 }
 
-function areInputStatesEqual(first: InputState, second: InputState): boolean {
-    return first.left === second.left
-        && first.right === second.right
-        && first.up === second.up
-        && first.down === second.down
-        && first.dash === second.dash
-        && first.deployBomb === second.deployBomb;
-}
-
 function recordLocalInputFrame(sequence: number, inputState: InputState, dt?: number): void {
     multiplayerLocalInputHistory.push({
         sequence,
@@ -568,7 +556,6 @@ function dispatchLocalInputImmediately(inputState: InputState, dt?: number): voi
     const inputSnapshot = cloneInputState(inputState);
     recordLocalInputFrame(currentSequence, inputSnapshot, dt);
     networkClient.sendInputFrame(currentSequence, inputSnapshot);
-    multiplayerLastDispatchedInputState = inputSnapshot;
 }
 
 function resetMultiplayerTickState(): void {
@@ -907,7 +894,6 @@ function stopMultiplayerInputSync(): void {
     multiplayerMatchPlayerOrder = [];
     multiplayerLocalPlayerIndex = null;
     multiplayerInputSequence = 0;
-    multiplayerLastDispatchedInputState = null;
     multiplayerLocalInputHistory.length = 0;
     multiplayerLastAcknowledgedLocalInputSequence = -1;
     resetMultiplayerTickState();
@@ -973,7 +959,6 @@ function startMultiplayerMatchFromRoom(roomOverride?: RoomSummary): boolean {
     multiplayerMatchPlayerOrder = playerOrder;
     multiplayerLocalPlayerIndex = localPlayerIndex;
     multiplayerInputSequence = 0;
-    multiplayerLastDispatchedInputState = null;
     multiplayerLocalInputHistory.length = 0;
     multiplayerLastAcknowledgedLocalInputSequence = -1;
     resetMultiplayerTickState();

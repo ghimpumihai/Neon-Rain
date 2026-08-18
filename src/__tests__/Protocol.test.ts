@@ -176,7 +176,7 @@ describe('Multiplayer protocol guards', () => {
 
     it('encodes and decodes wire payloads consistently', () => {
         const original = {
-            type: 'ping',
+            type: 'ping' as const,
             clientTimeMs: Date.now(),
         };
 

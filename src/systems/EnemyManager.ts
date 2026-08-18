@@ -142,8 +142,9 @@ export class EnemyManager {
     public applySnapshotEnemies(snapshots: EnemySnapshot[]): void {
         const activeEnemies = this.enemyPool.getActiveObjects();
 
-        while (activeEnemies.length > snapshots.length) {
-            const enemy = activeEnemies.pop();
+        const extraCount = activeEnemies.length - snapshots.length;
+        for (let i = 0; i < extraCount; i++) {
+            const enemy = activeEnemies[activeEnemies.length - 1 - i];
             if (enemy) this.enemyPool.release(enemy);
         }
 

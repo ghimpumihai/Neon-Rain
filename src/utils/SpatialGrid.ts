@@ -17,8 +17,8 @@ export class SpatialGrid<T extends GameObject> {
     private gridHeight: number; // Number of cells vertically
 
     constructor(
-        private worldWidth: number,
-        private worldHeight: number,
+        worldWidth: number,
+        worldHeight: number,
         cellWidth: number = 100,
         cellHeight: number = 100
     ) {

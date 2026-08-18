@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 import { Powerup, PowerupType } from '../entities/Powerup';
 import { Bomb } from '../entities/Bomb';
 import { Player, PLAYER_1_CONFIG } from '../entities/Player';
