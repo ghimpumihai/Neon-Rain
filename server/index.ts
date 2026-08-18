@@ -469,12 +469,14 @@ function spawnProjectile(
 }
 
 function spawnBomb(gameState: RoomGameState, owner: ServerPlayerState): void {
-    if (!owner.alive || owner.storedBombs <= 0 || owner.storedBombTimers.length === 0) {
+    if (!owner.alive || owner.storedBombs <= 0) {
         return;
     }
 
-    owner.storedBombs -= 1;
-    owner.storedBombTimers.shift();
+    owner.storedBombs = Math.max(0, owner.storedBombs - 1);
+    if (owner.storedBombTimers.length > 0) {
+        owner.storedBombTimers.shift();
+    }
 
     gameState.bombs.push({
         id: `bomb-${gameState.nextBombIndex++}`,
@@ -590,10 +592,16 @@ function tickRoomGameState(roomCode: string): void {
         const inputQueue = gameState.inputQueueByPlayerId.get(playerId) ?? [];
         inputQueue.sort((first, second) => first.sequence - second.sequence);
 
+        let wantsDeployBomb = false;
+
         while (inputQueue.length > 0) {
             const inputFrame = inputQueue.shift();
             if (!inputFrame || inputFrame.sequence <= playerState.lastProcessedSeq) {
                 continue;
+            }
+
+            if (inputFrame.input.deployBomb) {
+                wantsDeployBomb = true;
             }
 
             gameState.lastInputByPlayerId.set(playerId, inputFrame.input);
@@ -601,6 +609,9 @@ function tickRoomGameState(roomCode: string): void {
         }
 
         const activeInput = gameState.lastInputByPlayerId.get(playerId) ?? createNeutralInputState();
+        if (activeInput.deployBomb) {
+            wantsDeployBomb = true;
+        }
 
         if (playerState.alive) {
             applyInputToPlayer(
@@ -611,12 +622,12 @@ function tickRoomGameState(roomCode: string): void {
                 SERVER_WORLD_HEIGHT
             );
 
-            if (activeInput.deployBomb && !playerState.previousDeployBomb) {
+            if (wantsDeployBomb && !playerState.previousDeployBomb) {
                 spawnBomb(gameState, playerState);
             }
         }
 
-        playerState.previousDeployBomb = activeInput.deployBomb;
+        playerState.previousDeployBomb = wantsDeployBomb;
 
         if (playerState.isShielded) {
             playerState.shieldRemainingSeconds = Math.max(

@@ -458,7 +458,7 @@ export class Player extends Entity {
 
     private getEarliestBombTimeLeft(): number {
         if (this.storedBombTimers.length === 0) {
-            return 0;
+            return this.storedBombs > 0 ? Player.STORED_BOMB_TIMEOUT_SECONDS : 0;
         }
 
         return Math.max(0, Math.min(...this.storedBombTimers));
@@ -512,7 +512,14 @@ export class Player extends Entity {
      * Returns true when any held bomb expires.
      */
     public updateStoredBombTimers(deltaTime: number): boolean {
-        if (this.storedBombs <= 0) return false;
+        if (this.storedBombs <= 0) {
+            this.storedBombTimers = [];
+            return false;
+        }
+
+        while (this.storedBombTimers.length < this.storedBombs) {
+            this.storedBombTimers.push(Player.STORED_BOMB_TIMEOUT_SECONDS);
+        }
 
         this.storedBombTimers = this.storedBombTimers.map(timer => timer - deltaTime);
         const hasExpiredBomb = this.storedBombTimers.some(timer => timer <= 0);
@@ -569,13 +576,14 @@ export class Player extends Entity {
             preserveVelocity?: boolean;
         }
     ): void {
-        const shouldInterpolate = options?.interpolatePosition ?? false;
-        const alpha = Math.max(0, Math.min(1, options?.smoothingAlpha ?? 0.35));
-        const snapDistanceThreshold = Math.max(0, options?.snapDistanceThreshold ?? Number.POSITIVE_INFINITY);
-        const jitterDeadZone = Math.max(0, options?.jitterDeadZone ?? 0);
+        const interpolatePosition = options?.interpolatePosition ?? true;
+        const smoothingAlpha = options?.smoothingAlpha ?? 0.28;
+        const snapDistanceThreshold = options?.snapDistanceThreshold ?? 220;
+        const jitterDeadZone = options?.jitterDeadZone ?? 1.2;
         const preserveVelocity = options?.preserveVelocity ?? false;
 
-        if (shouldInterpolate) {
+        if (interpolatePosition) {
+            const alpha = Math.max(0.05, Math.min(1, smoothingAlpha));
             const deltaX = snapshot.position.x - this.position.x;
             const deltaY = snapshot.position.y - this.position.y;
             const distanceSquared = deltaX * deltaX + deltaY * deltaY;
@@ -610,8 +618,16 @@ export class Player extends Entity {
             this.shieldTimer = 0;
         }
 
-        this.storedBombs = Math.max(0, Math.floor(snapshot.storedBombs));
-        this.storedBombTimers = Array.from({ length: this.storedBombs }, () => Player.STORED_BOMB_TIMEOUT_SECONDS);
+        const targetBombs = Math.max(0, Math.floor(snapshot.storedBombs));
+        if (this.storedBombs !== targetBombs) {
+            this.storedBombs = targetBombs;
+            while (this.storedBombTimers.length < targetBombs) {
+                this.storedBombTimers.push(Player.STORED_BOMB_TIMEOUT_SECONDS);
+            }
+            while (this.storedBombTimers.length > targetBombs) {
+                this.storedBombTimers.shift();
+            }
+        }
 
         if (!this.isAlive) {
             this.clearStoredBombs();
@@ -636,7 +652,16 @@ export class Player extends Entity {
         if (typeof state.isAlive === 'boolean') this.isAlive = state.isAlive;
         if (typeof state.isShielded === 'boolean') this.isShielded = state.isShielded;
         if (typeof state.storedBombs === 'number') {
-            this.storedBombs = Math.max(0, Math.floor(state.storedBombs));
+            const targetBombs = Math.max(0, Math.floor(state.storedBombs));
+            if (this.storedBombs !== targetBombs) {
+                this.storedBombs = targetBombs;
+                while (this.storedBombTimers.length < targetBombs) {
+                    this.storedBombTimers.push(Player.STORED_BOMB_TIMEOUT_SECONDS);
+                }
+                while (this.storedBombTimers.length > targetBombs) {
+                    this.storedBombTimers.shift();
+                }
+            }
         }
         this.clampToBounds();
     }

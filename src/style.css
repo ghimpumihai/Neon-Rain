@@ -455,6 +455,28 @@ html, body {
   transform: scale(0.96);
 }
 
+.mobile-bomb-button {
+  position: absolute;
+  right: max(112px, env(safe-area-inset-right));
+  bottom: max(24px, env(safe-area-inset-bottom));
+  width: 72px;
+  height: 72px;
+  border: 1px solid rgba(255, 102, 0, 0.7);
+  border-radius: 50%;
+  background: radial-gradient(circle at 32% 28%, rgba(255, 150, 50, 0.95), rgba(180, 50, 0, 0.9));
+  color: #ffffff;
+  font-weight: 800;
+  font-size: 0.8rem;
+  letter-spacing: 0.07em;
+  box-shadow: 0 0 14px rgba(255, 102, 0, 0.4);
+  pointer-events: auto;
+  touch-action: none;
+}
+
+.mobile-bomb-button:active {
+  transform: scale(0.94);
+}
+
 .mobile-game-over-actions {
   position: absolute;
   left: 50%;

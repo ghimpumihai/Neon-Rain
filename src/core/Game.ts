@@ -591,13 +591,17 @@ export class Game {
 
             if (isLocalPlayer) {
                 player.update(deltaTime, resolvedInput);
+                player.updateStoredBombTimers(deltaTime);
                 return;
             }
 
             if (resolvedInput !== undefined) {
                 player.update(deltaTime, resolvedInput);
+                player.updateStoredBombTimers(deltaTime);
                 return;
             }
+
+            player.updateStoredBombTimers(deltaTime);
         });
 
         this.updatePlayerTrails(deltaTime);

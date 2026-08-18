@@ -16,9 +16,11 @@ export class MobileControls {
     private readonly joystickBase: HTMLDivElement;
     private readonly joystickKnob: HTMLDivElement;
     private readonly boostButton: HTMLButtonElement;
+    private readonly bombButton: HTMLButtonElement;
 
     private joystickPointerId: number | null = null;
     private boostPointerId: number | null = null;
+    private bombPointerId: number | null = null;
 
     private readonly state: InputState = { ...NEUTRAL_INPUT_STATE };
 
@@ -32,6 +34,11 @@ export class MobileControls {
         this.joystickKnob = document.createElement('div');
         this.joystickKnob.className = 'mobile-joystick-knob';
 
+        this.bombButton = document.createElement('button');
+        this.bombButton.className = 'mobile-bomb-button';
+        this.bombButton.type = 'button';
+        this.bombButton.textContent = 'BOMB';
+
         this.boostButton = document.createElement('button');
         this.boostButton.className = 'mobile-boost-button';
         this.boostButton.type = 'button';
@@ -39,6 +46,7 @@ export class MobileControls {
 
         this.joystickBase.appendChild(this.joystickKnob);
         this.overlay.appendChild(this.joystickBase);
+        this.overlay.appendChild(this.bombButton);
         this.overlay.appendChild(this.boostButton);
 
         this.bindEvents();
@@ -72,6 +80,7 @@ export class MobileControls {
 
         this.joystickPointerId = null;
         this.boostPointerId = null;
+        this.bombPointerId = null;
         this.joystickKnob.style.transform = 'translate(0px, 0px)';
     }
 
@@ -154,6 +163,35 @@ export class MobileControls {
 
         this.boostButton.addEventListener('pointerup', releaseBoost);
         this.boostButton.addEventListener('pointercancel', releaseBoost);
+
+        this.bombButton.addEventListener('pointerdown', (event) => {
+            if (this.bombPointerId !== null) {
+                return;
+            }
+
+            this.bombPointerId = event.pointerId;
+            this.bombButton.setPointerCapture(event.pointerId);
+            this.state.deployBomb = true;
+            event.preventDefault();
+        });
+
+        const releaseBomb = (event: PointerEvent): void => {
+            if (event.pointerId !== this.bombPointerId) {
+                return;
+            }
+
+            this.bombPointerId = null;
+            this.state.deployBomb = false;
+
+            if (this.bombButton.hasPointerCapture(event.pointerId)) {
+                this.bombButton.releasePointerCapture(event.pointerId);
+            }
+
+            event.preventDefault();
+        };
+
+        this.bombButton.addEventListener('pointerup', releaseBomb);
+        this.bombButton.addEventListener('pointercancel', releaseBomb);
     }
 
     private updateJoystick(clientX: number, clientY: number): void {

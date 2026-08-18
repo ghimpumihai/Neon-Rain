@@ -118,12 +118,12 @@ const DEFAULT_GRAPHICS_SETTINGS: GraphicsSettings = {
 };
 
 const MULTIPLAYER_SHARED_KEYS: KeyBindings = {
-    left: ['KeyA'],
-    right: ['KeyD'],
-    up: ['KeyW'],
-    down: ['KeyS'],
-    dash: ['ShiftLeft'],
-    deployBomb: ['KeyQ'],
+    left: ['KeyA', 'ArrowLeft'],
+    right: ['KeyD', 'ArrowRight'],
+    up: ['KeyW', 'ArrowUp'],
+    down: ['KeyS', 'ArrowDown'],
+    dash: ['ShiftLeft', 'ShiftRight', 'Space'],
+    deployBomb: ['KeyQ', 'KeyE', 'KeyB', 'KeyF', 'Digit0', 'Numpad0'],
 };
 
 function isValidFpsLimit(value: number): value is FpsLimitOption {
